@@ -10,3 +10,4 @@ __pycache__/
 __pycache__/bookrec_dataset.cpython-313.pyc
 __pycache__/data_preprocessing.cpython-313.pyc
 *.pyc
+.pyc

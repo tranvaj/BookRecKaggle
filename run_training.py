@@ -7,7 +7,7 @@ from torch import nn
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
 
-from bookrec_dataset import ImplicitDataset
+from bookrec_dataset import ImplicitDataset, SampledRankingDataset
 from data_preprocessing import (
     create_id_mappings,
     encode_ids,
@@ -124,22 +124,20 @@ def main():
         fixed_negatives=False,
     )
 
-    # Fixed validation negatives make metrics reproducible.
-    val_dataset = ImplicitDataset(
-        train_interactions=val_data,
+    # One fixed ranking per user containing every validation positive.
+    val_dataset = SampledRankingDataset(
+        held_out_interactions=val_data,
         all_interactions=all_interactions,
         num_items=len(item_to_index),
-        negatives_per_positive=99,
-        fixed_negatives=True,
+        num_candidates=1000,
         seed=42,
     )
 
-    test_dataset = ImplicitDataset(
-        train_interactions=test_data,
+    test_dataset = SampledRankingDataset(
+        held_out_interactions=test_data,
         all_interactions=all_interactions,
         num_items=len(item_to_index),
-        negatives_per_positive=99,
-        fixed_negatives=True,
+        num_candidates=1000,
         seed=43,
     )
 
@@ -149,7 +147,7 @@ def main():
 
     train_loader = DataLoader(
         train_dataset,
-        batch_size=256,
+        batch_size=512,
         shuffle=True,
         num_workers=0,
         pin_memory=device.type == "cuda",

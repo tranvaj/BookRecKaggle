@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 
 import torch
@@ -118,4 +119,86 @@ class ImplicitDataset(Dataset):
             ),
             "items": items,
             "label": labels,
+        }
+
+
+class SampledRankingDataset(Dataset):
+    """One fixed sampled candidate ranking per user for evaluation."""
+
+    def __init__(
+        self,
+        held_out_interactions: pd.DataFrame,
+        all_interactions: pd.DataFrame,
+        num_items: int,
+        num_candidates: int = 100,
+        seed: int = 42,
+    ):
+        positives_by_user = (
+            held_out_interactions
+            .groupby("user")["item"]
+            .agg(set)
+            .to_dict()
+        )
+        seen_by_user = (
+            all_interactions
+            .groupby("user")["item"]
+            .agg(set)
+            .to_dict()
+        )
+
+        largest_positive_set = max(map(len, positives_by_user.values()))
+        self.num_candidates = max(num_candidates, largest_positive_set)
+        self.users = []
+        self.candidate_items = []
+        self.labels = []
+
+        rng = np.random.default_rng(seed)
+
+        for user, positive_items in positives_by_user.items():
+            positives = list(positive_items)
+            seen = seen_by_user[user]
+            negatives_needed = self.num_candidates - len(positives)
+
+            if num_items - len(seen) < negatives_needed:
+                raise ValueError(
+                    f"User {user} does not have enough unobserved items"
+                )
+
+            negatives = []
+            sampled = set()
+            while len(negatives) < negatives_needed:
+                candidate = int(rng.integers(num_items))
+                if candidate not in seen and candidate not in sampled:
+                    negatives.append(candidate)
+                    sampled.add(candidate)
+
+            candidates = np.asarray(positives + negatives, dtype=np.int64)
+            labels = np.asarray(
+                [1.0] * len(positives) + [0.0] * len(negatives),
+                dtype=np.float32,
+            )
+            permutation = rng.permutation(self.num_candidates)
+
+            self.users.append(int(user))
+            self.candidate_items.append(candidates[permutation])
+            self.labels.append(labels[permutation])
+
+    def __len__(self):
+        return len(self.users)
+
+    def __getitem__(self, index):
+        return {
+            "users": torch.full(
+                (self.num_candidates,),
+                self.users[index],
+                dtype=torch.long,
+            ),
+            "items": torch.tensor(
+                self.candidate_items[index],
+                dtype=torch.long,
+            ),
+            "label": torch.tensor(
+                self.labels[index],
+                dtype=torch.float32,
+            ),
         }
