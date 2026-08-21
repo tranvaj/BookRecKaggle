@@ -1,5 +1,8 @@
 kagglehub[pandas-datasets]
+implicit
 numpy
 pandas
+scipy
+threadpoolctl
 torch
 tqdm

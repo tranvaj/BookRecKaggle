@@ -14,9 +14,10 @@ from bookrec.data import (
     split_interactions,
 )
 from bookrec.implicit.datasets import ImplicitDataset, SampledRankingDataset
-from bookrec.implicit.evaluation import RANKING_METRICS, evaluate_sampled_ranking
+from bookrec.implicit.evaluation import RANKING_METRICS
 from bookrec.implicit.model import ImplicitRecommenderMLP
 from bookrec.training import train as train_model
+
 
 SEED = 42
 EVALUATION_CANDIDATES = 1_000
@@ -61,14 +62,6 @@ def main():
         num_candidates=EVALUATION_CANDIDATES,
         seed=SEED,
     )
-    test_dataset = SampledRankingDataset(
-        test_data,
-        all_interactions,
-        num_items=len(item_to_index),
-        num_candidates=EVALUATION_CANDIDATES,
-        seed=SEED + 1,
-    )
-
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     train_loader = DataLoader(train_dataset, batch_size=512, shuffle=True)
     validation_loader = DataLoader(
@@ -76,15 +69,13 @@ def main():
         batch_size=64,
         shuffle=False,
     )
-    test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False)
-
     model = ImplicitRecommenderMLP(
         num_users=len(user_to_index),
         num_items=len(item_to_index),
     ).to(device)
     loss_function = nn.BCEWithLogitsLoss()
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-5)
-    epochs = 10
+    epochs = 7
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer,
         T_max=epochs,
@@ -109,8 +100,6 @@ def main():
         metric_mode="max",
     )
 
-    test_scores = evaluate_sampled_ranking(model, test_loader, device)
-    print(f"Test metrics: {test_scores}")
     torch.save(
         {
             "model_state_dict": model.state_dict(),
@@ -119,6 +108,7 @@ def main():
         },
         artifact_directory / "model_with_mappings.pt",
     )
+    print(f"Saved trained MLP to {artifact_directory}")
 
 
 if __name__ == "__main__":

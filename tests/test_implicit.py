@@ -5,6 +5,11 @@ import pandas as pd
 import torch
 from torch.utils.data import DataLoader
 
+from bookrec.implicit.baselines import (
+    ALSBaseline,
+    MostPopularBaseline,
+    RandomBaseline,
+)
 from bookrec.implicit.datasets import ImplicitDataset, SampledRankingDataset
 from bookrec.implicit.metrics import mean_reciprocal_rank, ndcg_at_k, recall_at_k
 from bookrec.implicit.model import ImplicitRecommenderMLP
@@ -81,6 +86,44 @@ class ImplicitTests(unittest.TestCase):
         )
 
         self.assertTrue(all(np.isfinite(loss) for loss in losses))
+
+    def test_most_popular_uses_training_interaction_counts(self):
+        baseline = MostPopularBaseline.fit(
+            self.all_interactions,
+            num_items=6,
+        )
+        scores = baseline(
+            users=torch.tensor([0, 0, 0]),
+            items=torch.tensor([0, 3, 5]),
+        )
+
+        self.assertEqual(scores[0].item(), scores[1].item())
+        self.assertGreater(scores[0].item(), scores[2].item())
+
+    def test_random_baseline_returns_scores_between_zero_and_one(self):
+        users = torch.tensor([[0, 0, 0], [1, 1, 1]])
+        items = torch.tensor([[2, 3, 4], [2, 3, 4]])
+
+        scores = RandomBaseline()(users, items)
+
+        self.assertEqual(scores.shape, items.shape)
+        self.assertTrue(torch.all((scores >= 0) & (scores < 1)))
+
+    def test_als_baseline_scores_grouped_candidates(self):
+        baseline = ALSBaseline.fit(
+            self.all_interactions,
+            num_users=2,
+            num_items=6,
+            factors=2,
+            iterations=2,
+        )
+        users = torch.tensor([[0, 0], [1, 1]])
+        items = torch.tensor([[0, 3], [1, 4]])
+
+        scores = baseline(users, items)
+
+        self.assertEqual(scores.shape, items.shape)
+        self.assertTrue(torch.isfinite(scores).all())
 
 
 if __name__ == "__main__":

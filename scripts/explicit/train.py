@@ -13,11 +13,11 @@ from bookrec.data import (
     load_dataset,
     split_interactions,
 )
-from bookrec.explicit.baselines import evaluate_mean_baselines
 from bookrec.explicit.datasets import ExplicitDataset
-from bookrec.explicit.evaluation import RATING_METRICS, evaluate_ratings
+from bookrec.explicit.evaluation import RATING_METRICS
 from bookrec.explicit.model import ExplicitRecommenderMLP
 from bookrec.training import train as train_model
+
 
 SEED = 42
 
@@ -34,7 +34,7 @@ def main():
     set_seed(SEED)
     ratings = load_dataset()
     explicit_ratings = ratings[ratings[RATING_COLUMN] > 0].reset_index(drop=True)
-    train, validation, test = split_interactions(explicit_ratings, seed=SEED)
+    train, validation, _ = split_interactions(explicit_ratings, seed=SEED)
 
     user_to_index, item_to_index = create_id_mappings(train)
     train_data = encode_interactions(train, user_to_index, item_to_index)
@@ -43,10 +43,6 @@ def main():
         user_to_index,
         item_to_index,
     )
-    test_data = encode_interactions(test, user_to_index, item_to_index)
-
-    print("Validation baselines:")
-    print(evaluate_mean_baselines(train, validation))
 
     train_loader = DataLoader(
         ExplicitDataset(train_data),
@@ -58,17 +54,13 @@ def main():
         batch_size=2_048,
         shuffle=False,
     )
-    test_loader = DataLoader(
-        ExplicitDataset(test_data),
-        batch_size=2_048,
-        shuffle=False,
-    )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    global_mean = float(train[RATING_COLUMN].mean())
     model = ExplicitRecommenderMLP(
         num_users=len(user_to_index),
         num_items=len(item_to_index),
-        global_mean=float(train[RATING_COLUMN].mean()),
+        global_mean=global_mean,
     ).to(device)
     loss_function = nn.MSELoss()
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-5)
@@ -97,16 +89,16 @@ def main():
         metric_mode="min",
     )
 
-    print(f"Test metrics: {evaluate_ratings(model, test_loader, device)}")
     torch.save(
         {
             "model_state_dict": model.state_dict(),
             "user_to_index": user_to_index,
             "item_to_index": item_to_index,
-            "global_mean": float(train[RATING_COLUMN].mean()),
+            "global_mean": global_mean,
         },
         artifact_directory / "model_with_mappings.pt",
     )
+    print(f"Saved trained explicit model to {artifact_directory}")
 
 
 if __name__ == "__main__":

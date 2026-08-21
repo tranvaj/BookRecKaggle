@@ -19,6 +19,7 @@ bookrec/
 ├── training.py               # Shared training and evaluation loops
 ├── implicit/
 │   ├── datasets.py          # Negative sampling and user-level evaluation
+│   ├── baselines.py         # Random, popularity, and implicit ALS
 │   ├── model.py             # Binary interaction MLP
 │   ├── metrics.py           # Recall@K, NDCG@K, MRR, BCE
 │   └── evaluation.py
@@ -30,8 +31,13 @@ bookrec/
     └── evaluation.py
 
 scripts/
-├── train_implicit.py
-└── train_explicit.py
+├── implicit/
+│   ├── train.py             # Train the MLP
+│   ├── train_als.py         # Train the ALS baseline
+│   └── evaluate.py          # Compare models on the test set
+└── explicit/
+    ├── train.py
+    └── evaluate.py
 ```
 
 ## Implicit model
@@ -42,10 +48,15 @@ fixed ranking per user containing all held-out positives and enough sampled
 unobserved items to reach 1,000 candidates.
 
 The model returns raw logits and is trained with `BCEWithLogitsLoss`. Model
-selection uses NDCG@10; test reporting includes Recall@10, NDCG@10, MRR, and BCE.
+selection uses NDCG@50; test reporting includes Recall@50, NDCG@50,
+Recall@100, and BCE.
+It is compared with random ranking, most-popular items, and implicit ALS using
+the same sampled test candidates.
 
 ```bash
-.venv/bin/python -m scripts.train_implicit
+.venv/bin/python -m scripts.implicit.train
+.venv/bin/python -m scripts.implicit.train_als
+.venv/bin/python -m scripts.implicit.evaluate
 ```
 
 ## Explicit model
@@ -60,7 +71,8 @@ The model is trained with MSE and evaluated against global-, user-, and item-mea
 baselines using RMSE and MAE.
 
 ```bash
-.venv/bin/python -m scripts.train_explicit
+.venv/bin/python -m scripts.explicit.train
+.venv/bin/python -m scripts.explicit.evaluate
 ```
 
 Both scripts build user and item mappings from training data. Validation/test
