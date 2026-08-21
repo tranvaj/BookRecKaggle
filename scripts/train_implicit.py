@@ -16,8 +16,7 @@ from bookrec.data import (
 from bookrec.implicit.datasets import ImplicitDataset, SampledRankingDataset
 from bookrec.implicit.evaluation import RANKING_METRICS, evaluate_sampled_ranking
 from bookrec.implicit.model import ImplicitRecommenderMLP
-from bookrec.training import train
-
+from bookrec.training import train as train_model
 
 SEED = 42
 EVALUATION_CANDIDATES = 1_000
@@ -71,7 +70,7 @@ def main():
     )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    train_loader = DataLoader(train_dataset, batch_size=256, shuffle=True)
+    train_loader = DataLoader(train_dataset, batch_size=512, shuffle=True)
     validation_loader = DataLoader(
         validation_dataset,
         batch_size=64,
@@ -93,7 +92,7 @@ def main():
 
     artifact_directory = Path("artifacts/implicit")
     artifact_directory.mkdir(parents=True, exist_ok=True)
-    model, _, _, _ = train(
+    model, _, _, _ = train_model(
         model=model,
         train_dl=train_loader,
         val_dl=validation_loader,
@@ -102,7 +101,7 @@ def main():
         scheduler=scheduler,
         epochs=epochs,
         val_metrics=RANKING_METRICS,
-        save_val_metric="ndcg_at_10",
+        save_val_metric="ndcg_at_50",
         device=device,
         output_path=artifact_directory / "best_model.pt",
         load_best_model=True,

@@ -17,8 +17,7 @@ from bookrec.explicit.baselines import evaluate_mean_baselines
 from bookrec.explicit.datasets import ExplicitDataset
 from bookrec.explicit.evaluation import RATING_METRICS, evaluate_ratings
 from bookrec.explicit.model import ExplicitRecommenderMLP
-from bookrec.training import train
-
+from bookrec.training import train as train_model
 
 SEED = 42
 
@@ -81,7 +80,7 @@ def main():
 
     artifact_directory = Path("artifacts/explicit")
     artifact_directory.mkdir(parents=True, exist_ok=True)
-    model, _, _, _ = train(
+    model, _, _, _ = train_model(
         model=model,
         train_dl=train_loader,
         val_dl=validation_loader,

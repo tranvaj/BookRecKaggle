@@ -37,9 +37,11 @@ def mean_reciprocal_rank(labels: np.ndarray, logits: np.ndarray) -> float:
     return float(np.mean(1.0 / first_relevant_rank))
 
 
-def recall_at_10(labels: np.ndarray, logits: np.ndarray) -> float:
-    return recall_at_k(labels, logits, k=10)
+def recall_at_50(labels: np.ndarray, logits: np.ndarray) -> float:
+    return recall_at_k(labels, logits, k=50)
 
+def recall_at_100(labels: np.ndarray, logits: np.ndarray) -> float:
+    return recall_at_k(labels, logits, k=100)
 
-def ndcg_at_10(labels: np.ndarray, logits: np.ndarray) -> float:
-    return ndcg_at_k(labels, logits, k=10)
+def ndcg_at_50(labels: np.ndarray, logits: np.ndarray) -> float:
+    return ndcg_at_k(labels, logits, k=50)

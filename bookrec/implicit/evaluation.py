@@ -2,18 +2,18 @@ import torch
 
 from bookrec.implicit.metrics import (
     binary_cross_entropy,
-    mean_reciprocal_rank,
-    ndcg_at_10,
-    recall_at_10,
+    ndcg_at_50,
+    recall_at_50,
+    recall_at_100
 )
 from bookrec.training import validation_loop
 
 
 RANKING_METRICS = [
+    recall_at_50,
+    ndcg_at_50,
+    recall_at_100,
     binary_cross_entropy,
-    recall_at_10,
-    ndcg_at_10,
-    mean_reciprocal_rank,
 ]
 
 
