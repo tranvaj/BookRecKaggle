@@ -1,63 +1,74 @@
-# Book recommendation skeleton
+# Book recommendation
 
-This project treats Book-Crossing ratings from 1 through 10 as explicit feedback.
-Rows with rating 0 are excluded because they represent implicit feedback and are
-not on the same rating scale.
+This project explores Book-Crossing recommendations as two separate collaborative
+filtering tasks:
 
-The neural recommender predicts
+- **Implicit feedback:** every recorded user-book row is an interaction. The model
+  learns from observed positives and dynamically sampled unobserved pairs.
+- **Explicit feedback:** ratings from 1 through 10 are modeled as numeric targets;
+  rating-zero rows are excluded from this task.
 
-`global mean + user bias + item bias + MLP(user embedding, item embedding)`.
+Keeping the tasks separate avoids mixing binary ranking objectives with rating
+regression while allowing data loading and training mechanics to be shared.
 
-## Pipeline
+## Structure
 
-```python
-import torch
-from torch.utils.data import DataLoader
+```text
+bookrec/
+├── data.py                   # Loading, splitting, and ID encoding
+├── training.py               # Shared training and evaluation loops
+├── implicit/
+│   ├── datasets.py          # Negative sampling and user-level evaluation
+│   ├── model.py             # Binary interaction MLP
+│   ├── metrics.py           # Recall@K, NDCG@K, MRR, BCE
+│   └── evaluation.py
+└── explicit/
+    ├── datasets.py          # Numeric rating examples
+    ├── model.py             # Bias-aware rating MLP
+    ├── metrics.py           # RMSE and MAE
+    ├── baselines.py         # Global/user/item means
+    └── evaluation.py
 
-from baselines import evaluate_mean_baselines
-from bookrec_dataset import BookRecDataset
-from data_preprocessing import (
-    build_id_mappings,
-    encode_interactions,
-    filter_known_interactions,
-    get_splits,
-    load_ds,
-    prepare_explicit_ratings,
-)
-from model import RecommenderMLP
-from train import evaluate, train_one_epoch
-
-ratings = prepare_explicit_ratings(load_ds())
-train_df, val_df, test_df = get_splits(ratings)
-mappings = build_id_mappings(train_df)
-val_known = filter_known_interactions(val_df, mappings)
-
-print(f"Validation coverage: {len(val_known) / len(val_df):.1%}")
-print(evaluate_mean_baselines(train_df, val_known))
-
-train_data = encode_interactions(train_df, mappings)
-val_data = encode_interactions(val_known, mappings, drop_unknown=False)
-
-train_loader = DataLoader(BookRecDataset(train_data), batch_size=1024, shuffle=True)
-val_loader = DataLoader(BookRecDataset(val_data), batch_size=2048)
-
-model = RecommenderMLP(
-    num_users=len(mappings.users),
-    num_items=len(mappings.items),
-    global_mean=train_df["Book-Rating"].mean(),
-)
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model.to(device)
-optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-5)
-
-for epoch in range(10):
-    train_rmse = train_one_epoch(model, train_loader, optimizer, device)
-    val_metrics = evaluate(model, val_loader, device)
-    print(epoch + 1, train_rmse, val_metrics)
+scripts/
+├── train_implicit.py
+└── train_explicit.py
 ```
 
-Fit all statistics and ID mappings on `train_df` only. Validation/test books not
-seen during training are excluded from neural-model evaluation; the mean baselines
-fall back to the global training mean for unknown users or books. Compare every
-model on the same known-interaction subset and report its coverage.
+## Implicit model
+
+All rows, including `Book-Rating == 0`, are positive interactions. Four unobserved
+items are sampled for every positive during training. Validation and test use one
+fixed ranking per user containing all held-out positives and enough sampled
+unobserved items to reach 1,000 candidates.
+
+The model returns raw logits and is trained with `BCEWithLogitsLoss`. Model
+selection uses NDCG@10; test reporting includes Recall@10, NDCG@10, MRR, and BCE.
+
+```bash
+.venv/bin/python -m scripts.train_implicit
+```
+
+## Explicit model
+
+Only ratings from 1 through 10 are used. The prediction is:
+
+```text
+global mean + user bias + item bias + MLP(user embedding, item embedding)
+```
+
+The model is trained with MSE and evaluated against global-, user-, and item-mean
+baselines using RMSE and MAE.
+
+```bash
+.venv/bin/python -m scripts.train_explicit
+```
+
+Both scripts build user and item mappings from training data. Validation/test
+interactions with cold-start IDs are excluded because ID-only collaborative
+filtering cannot learn embeddings for unseen users or books.
+
+## Tests
+
+```bash
+.venv/bin/python -m unittest discover -s tests -v
+```

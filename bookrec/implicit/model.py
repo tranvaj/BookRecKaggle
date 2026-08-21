@@ -1,9 +1,10 @@
 import torch
 from torch import nn
-import torch
-import torch.nn.functional as F
 
-class RecommenderMLP(nn.Module):
+
+class ImplicitRecommenderMLP(nn.Module):
+    """Score user-item interaction likelihood with embedding features."""
+
     def __init__(
         self,
         num_users: int,
@@ -22,7 +23,9 @@ class RecommenderMLP(nn.Module):
         layers: list[nn.Module] = []
         input_dim = embedding_dim * 2
         for hidden_dim in hidden_dims:
-            layers.extend((nn.Linear(input_dim, hidden_dim), nn.ReLU(), nn.Dropout(dropout)))
+            layers.extend(
+                (nn.Linear(input_dim, hidden_dim), nn.ReLU(), nn.Dropout(dropout))
+            )
             input_dim = hidden_dim
         layers.append(nn.Linear(input_dim, 1))
         self.mlp = nn.Sequential(*layers)
@@ -30,10 +33,9 @@ class RecommenderMLP(nn.Module):
         nn.init.normal_(self.user_embedding.weight, std=0.05)
         nn.init.normal_(self.item_embedding.weight, std=0.05)
 
-    def forward(self, users: torch.Tensor, items: torch.Tensor, **kwargs) -> torch.Tensor:
+    def forward(self, users: torch.Tensor, items: torch.Tensor) -> torch.Tensor:
         features = torch.cat(
             (self.user_embedding(users), self.item_embedding(items)),
             dim=-1,
         )
-        interaction = self.mlp(features).squeeze(-1)
-        return interaction
+        return self.mlp(features).squeeze(-1)
