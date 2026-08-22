@@ -15,12 +15,15 @@ from bookrec.data import (
 )
 from bookrec.implicit.datasets import ImplicitDataset, SampledRankingDataset
 from bookrec.implicit.evaluation import RANKING_METRICS
+from bookrec.implicit.hyperparameters import load_hyperparameters
 from bookrec.implicit.model import ImplicitRecommenderMLP
 from bookrec.training import train as train_model
 
 
 SEED = 42
 EVALUATION_CANDIDATES = 1_000
+EPOCHS = 12
+BATCH_SIZE = 512
 
 
 def set_seed(seed: int):
@@ -33,8 +36,13 @@ def set_seed(seed: int):
 
 def main():
     set_seed(SEED)
+    artifact_directory = Path("artifacts/implicit")
+    hyperparameters = load_hyperparameters(
+        artifact_directory / "best_hparams.json"
+    )
+    print(f"Training hyperparameters: {hyperparameters}")
     interactions = load_dataset()
-    train, validation, test = split_interactions(interactions, seed=SEED)
+    train, validation, _ = split_interactions(interactions, seed=SEED)
 
     user_to_index, item_to_index = create_id_mappings(train)
     train_data = encode_interactions(train, user_to_index, item_to_index)
@@ -43,45 +51,50 @@ def main():
         user_to_index,
         item_to_index,
     )
-    test_data = encode_interactions(test, user_to_index, item_to_index)
-    all_interactions = pd.concat(
-        [train_data, validation_data, test_data],
+    known_interactions = pd.concat(
+        [train_data, validation_data],
         ignore_index=True,
     )
 
     train_dataset = ImplicitDataset(
         train_data,
-        all_interactions,
+        known_interactions,
         num_items=len(item_to_index),
-        negatives_per_positive=4,
+        negatives_per_positive=8,
     )
     validation_dataset = SampledRankingDataset(
         validation_data,
-        all_interactions,
+        known_interactions,
         num_items=len(item_to_index),
         num_candidates=EVALUATION_CANDIDATES,
         seed=SEED,
     )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    train_loader = DataLoader(train_dataset, batch_size=512, shuffle=True)
+    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
     validation_loader = DataLoader(
         validation_dataset,
-        batch_size=64,
+        batch_size=BATCH_SIZE,
         shuffle=False,
     )
     model = ImplicitRecommenderMLP(
         num_users=len(user_to_index),
         num_items=len(item_to_index),
+        embedding_dim=hyperparameters["embedding_dim"],
+        hidden_dims=hyperparameters["hidden_dims"],
+        dropout=hyperparameters["dropout"],
     ).to(device)
     loss_function = nn.BCEWithLogitsLoss()
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-5)
-    epochs = 7
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=hyperparameters["learning_rate"],
+        weight_decay=hyperparameters["weight_decay"],
+    )
+    epochs = EPOCHS
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer,
         T_max=epochs,
     )
 
-    artifact_directory = Path("artifacts/implicit")
     artifact_directory.mkdir(parents=True, exist_ok=True)
     model, _, _, _ = train_model(
         model=model,
@@ -96,7 +109,7 @@ def main():
         device=device,
         output_path=artifact_directory / "best_model.pt",
         load_best_model=True,
-        early_stopping_patience=3,
+        early_stopping_patience=4,
         metric_mode="max",
     )
 
@@ -105,6 +118,7 @@ def main():
             "model_state_dict": model.state_dict(),
             "user_to_index": user_to_index,
             "item_to_index": item_to_index,
+            "hyperparameters": hyperparameters,
         },
         artifact_directory / "model_with_mappings.pt",
     )

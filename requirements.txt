@@ -1,6 +1,7 @@
 kagglehub[pandas-datasets]
 implicit
 numpy
+optuna
 pandas
 scipy
 threadpoolctl

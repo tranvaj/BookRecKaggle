@@ -32,6 +32,7 @@ bookrec/
 
 scripts/
 ├── implicit/
+│   ├── tune.py              # Tune the MLP with Optuna
 │   ├── train.py             # Train the MLP
 │   ├── train_als.py         # Train the ALS baseline
 │   └── evaluate.py          # Compare models on the test set
@@ -53,7 +54,13 @@ Recall@100, and BCE.
 It is compared with random ranking, most-popular items, and implicit ALS using
 the same sampled test candidates.
 
+Optuna runs 25 trials and maximizes validation NDCG@50. The study is resumable
+from `artifacts/implicit/hpo.db`, and the selected configuration is written to
+`artifacts/implicit/best_hparams.json`. Training uses that file when it exists
+and otherwise falls back to the model defaults.
+
 ```bash
+.venv/bin/python -m scripts.implicit.tune
 .venv/bin/python -m scripts.implicit.train
 .venv/bin/python -m scripts.implicit.train_als
 .venv/bin/python -m scripts.implicit.evaluate

@@ -10,6 +10,7 @@ from bookrec.data import encode_interactions, load_dataset, split_interactions
 from bookrec.implicit.baselines import ALSBaseline, evaluate_ranking_baselines
 from bookrec.implicit.datasets import SampledRankingDataset
 from bookrec.implicit.evaluation import evaluate_sampled_ranking
+from bookrec.implicit.hyperparameters import DEFAULT_HYPERPARAMETERS
 from bookrec.implicit.model import ImplicitRecommenderMLP
 
 
@@ -37,6 +38,10 @@ def main():
     )
     user_to_index = checkpoint["user_to_index"]
     item_to_index = checkpoint["item_to_index"]
+    hyperparameters = checkpoint.get(
+        "hyperparameters",
+        DEFAULT_HYPERPARAMETERS,
+    )
 
     interactions = load_dataset()
     train, validation, test = split_interactions(interactions, seed=SEED)
@@ -64,6 +69,9 @@ def main():
     model = ImplicitRecommenderMLP(
         num_users=len(user_to_index),
         num_items=len(item_to_index),
+        embedding_dim=hyperparameters["embedding_dim"],
+        hidden_dims=tuple(hyperparameters["hidden_dims"]),
+        dropout=hyperparameters["dropout"],
     ).to(device)
     model.load_state_dict(checkpoint["model_state_dict"])
 

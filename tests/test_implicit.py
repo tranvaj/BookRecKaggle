@@ -1,4 +1,7 @@
+import json
+import tempfile
 import unittest
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -11,6 +14,7 @@ from bookrec.implicit.baselines import (
     RandomBaseline,
 )
 from bookrec.implicit.datasets import ImplicitDataset, SampledRankingDataset
+from bookrec.implicit.hyperparameters import load_hyperparameters
 from bookrec.implicit.metrics import mean_reciprocal_rank, ndcg_at_k, recall_at_k
 from bookrec.implicit.model import ImplicitRecommenderMLP
 from bookrec.training import train_loop
@@ -124,6 +128,26 @@ class ImplicitTests(unittest.TestCase):
 
         self.assertEqual(scores.shape, items.shape)
         self.assertTrue(torch.isfinite(scores).all())
+
+    def test_saved_hyperparameters_are_loaded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "best_hparams.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "embedding_dim": 64,
+                        "hidden_dims": [128, 64],
+                        "dropout": 0.3,
+                        "learning_rate": 5e-4,
+                        "weight_decay": 1e-6,
+                    }
+                )
+            )
+
+            hyperparameters = load_hyperparameters(path)
+
+        self.assertEqual(hyperparameters["embedding_dim"], 64)
+        self.assertEqual(hyperparameters["hidden_dims"], (128, 64))
 
 
 if __name__ == "__main__":
