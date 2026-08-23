@@ -20,7 +20,7 @@ bookrec/
 ├── implicit/
 │   ├── datasets.py          # Negative sampling and user-level evaluation
 │   ├── baselines.py         # Random, popularity, and implicit ALS
-│   ├── model.py             # Binary interaction MLP
+│   ├── model.py             # MLP and GMF + MLP (NeuMF)
 │   ├── metrics.py           # Recall@K, NDCG@K, MRR, BCE
 │   └── evaluation.py
 └── explicit/
@@ -32,8 +32,8 @@ bookrec/
 
 scripts/
 ├── implicit/
-│   ├── tune.py              # Tune the MLP with Optuna
-│   ├── train.py             # Train the MLP
+│   ├── tune.py              # Tune MLP or NeuMF with Optuna
+│   ├── train.py             # Train MLP or NeuMF
 │   ├── train_als.py         # Train the ALS baseline
 │   └── evaluate.py          # Compare models on the test set
 └── explicit/
@@ -48,20 +48,41 @@ items are sampled for every positive during training. Validation and test use on
 fixed ranking per user containing all held-out positives and enough sampled
 unobserved items to reach 1,000 candidates.
 
-The model returns raw logits and is trained with `BCEWithLogitsLoss`. Model
-selection uses NDCG@50; test reporting includes Recall@50, NDCG@50,
-Recall@100, and BCE.
+Two neural models are available: a concatenation-only MLP and NeuMF, which
+combines a GMF branch with an MLP branch. Both return raw logits and are trained
+with `BCEWithLogitsLoss`. Model selection uses NDCG@50; test reporting includes
+Recall@50, NDCG@50, Recall@100, and BCE.
 It is compared with random ranking, most-popular items, and implicit ALS using
 the same sampled test candidates.
 
-Optuna runs 25 trials and maximizes validation NDCG@50. The study is resumable
-from `artifacts/implicit/hpo.db`, and the selected configuration is written to
-`artifacts/implicit/best_hparams.json`. Training uses that file when it exists
-and otherwise falls back to the model defaults.
+Optuna runs a separate resumable study for each neural model and maximizes
+validation NDCG@50. Each model keeps its hyperparameters and checkpoints in its
+own artifact directory:
+
+```text
+artifacts/implicit/
+├── mlp/
+│   ├── hpo.db
+│   ├── best_hparams.json
+│   ├── best_model.pt
+│   └── model_with_mappings.pt
+├── neumf/
+│   ├── hpo.db
+│   ├── best_hparams.json
+│   ├── best_model.pt
+│   └── model_with_mappings.pt
+└── als/
+    └── model.pt
+```
+
+Tune and train each neural model independently, train ALS once, and then run one
+evaluation that compares all models on the same test candidates:
 
 ```bash
-.venv/bin/python -m scripts.implicit.tune
-.venv/bin/python -m scripts.implicit.train
+.venv/bin/python -m scripts.implicit.tune --model mlp
+.venv/bin/python -m scripts.implicit.tune --model neumf
+.venv/bin/python -m scripts.implicit.train --model mlp
+.venv/bin/python -m scripts.implicit.train --model neumf
 .venv/bin/python -m scripts.implicit.train_als
 .venv/bin/python -m scripts.implicit.evaluate
 ```

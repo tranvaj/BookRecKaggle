@@ -1,3 +1,4 @@
+import argparse
 import random
 from pathlib import Path
 
@@ -16,14 +17,15 @@ from bookrec.data import (
 from bookrec.implicit.datasets import ImplicitDataset, SampledRankingDataset
 from bookrec.implicit.evaluation import RANKING_METRICS
 from bookrec.implicit.hyperparameters import load_hyperparameters
-from bookrec.implicit.model import ImplicitRecommenderMLP
+from bookrec.implicit.model import MODEL_REGISTRY, create_implicit_model
 from bookrec.training import train as train_model
 
 
 SEED = 42
 EVALUATION_CANDIDATES = 1_000
-EPOCHS = 12
+EPOCHS = 100
 BATCH_SIZE = 512
+NEGATIVES_PER_POSITIVE = 8
 
 
 def set_seed(seed: int):
@@ -34,9 +36,20 @@ def set_seed(seed: int):
         torch.cuda.manual_seed_all(seed)
 
 
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--model",
+        choices=MODEL_REGISTRY,
+        required=True,
+    )
+    return parser.parse_args()
+
+
 def main():
+    args = parse_args()
     set_seed(SEED)
-    artifact_directory = Path("artifacts/implicit")
+    artifact_directory = Path("artifacts/implicit") / args.model
     hyperparameters = load_hyperparameters(
         artifact_directory / "best_hparams.json"
     )
@@ -60,7 +73,7 @@ def main():
         train_data,
         known_interactions,
         num_items=len(item_to_index),
-        negatives_per_positive=8,
+        negatives_per_positive=NEGATIVES_PER_POSITIVE,
     )
     validation_dataset = SampledRankingDataset(
         validation_data,
@@ -76,12 +89,11 @@ def main():
         batch_size=BATCH_SIZE,
         shuffle=False,
     )
-    model = ImplicitRecommenderMLP(
+    model = create_implicit_model(
+        args.model,
         num_users=len(user_to_index),
         num_items=len(item_to_index),
-        embedding_dim=hyperparameters["embedding_dim"],
-        hidden_dims=hyperparameters["hidden_dims"],
-        dropout=hyperparameters["dropout"],
+        hyperparameters=hyperparameters,
     ).to(device)
     loss_function = nn.BCEWithLogitsLoss()
     optimizer = torch.optim.AdamW(
@@ -109,12 +121,13 @@ def main():
         device=device,
         output_path=artifact_directory / "best_model.pt",
         load_best_model=True,
-        early_stopping_patience=4,
+        early_stopping_patience=5,
         metric_mode="max",
     )
 
     torch.save(
         {
+            "model_type": args.model,
             "model_state_dict": model.state_dict(),
             "user_to_index": user_to_index,
             "item_to_index": item_to_index,
@@ -122,7 +135,7 @@ def main():
         },
         artifact_directory / "model_with_mappings.pt",
     )
-    print(f"Saved trained MLP to {artifact_directory}")
+    print(f"Saved trained {args.model} model to {artifact_directory}")
 
 
 if __name__ == "__main__":

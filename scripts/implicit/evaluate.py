@@ -11,7 +11,7 @@ from bookrec.implicit.baselines import ALSBaseline, evaluate_ranking_baselines
 from bookrec.implicit.datasets import SampledRankingDataset
 from bookrec.implicit.evaluation import evaluate_sampled_ranking
 from bookrec.implicit.hyperparameters import DEFAULT_HYPERPARAMETERS
-from bookrec.implicit.model import ImplicitRecommenderMLP
+from bookrec.implicit.model import MODEL_REGISTRY, create_implicit_model
 
 
 SEED = 42
@@ -29,19 +29,39 @@ def set_seed(seed: int):
 def main():
     set_seed(SEED)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    artifact_directory = Path("artifacts/implicit")
+    artifact_root = Path("artifacts/implicit")
+    checkpoints = {}
+    for model_name in MODEL_REGISTRY:
+        checkpoint_path = (
+            artifact_root / model_name / "model_with_mappings.pt"
+        )
+        if not checkpoint_path.exists():
+            raise FileNotFoundError(
+                f"Missing {model_name} checkpoint. Run "
+                f"'python -m scripts.implicit.train --model {model_name}'."
+            )
+        checkpoint = torch.load(
+            checkpoint_path,
+            map_location="cpu",
+            weights_only=False,
+        )
+        if checkpoint.get("model_type") != model_name:
+            raise ValueError(
+                f"Checkpoint at {checkpoint_path} is not a {model_name} model"
+            )
+        checkpoints[model_name] = checkpoint
 
-    checkpoint = torch.load(
-        artifact_directory / "model_with_mappings.pt",
-        map_location="cpu",
-        weights_only=False,
-    )
-    user_to_index = checkpoint["user_to_index"]
-    item_to_index = checkpoint["item_to_index"]
-    hyperparameters = checkpoint.get(
-        "hyperparameters",
-        DEFAULT_HYPERPARAMETERS,
-    )
+    reference_checkpoint = checkpoints["mlp"]
+    user_to_index = reference_checkpoint["user_to_index"]
+    item_to_index = reference_checkpoint["item_to_index"]
+    for model_name, checkpoint in checkpoints.items():
+        if (
+            checkpoint["user_to_index"] != user_to_index
+            or checkpoint["item_to_index"] != item_to_index
+        ):
+            raise ValueError(
+                f"The {model_name} checkpoint uses different ID mappings"
+            )
 
     interactions = load_dataset()
     train, validation, test = split_interactions(interactions, seed=SEED)
@@ -66,17 +86,8 @@ def main():
     )
     test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False)
 
-    model = ImplicitRecommenderMLP(
-        num_users=len(user_to_index),
-        num_items=len(item_to_index),
-        embedding_dim=hyperparameters["embedding_dim"],
-        hidden_dims=tuple(hyperparameters["hidden_dims"]),
-        dropout=hyperparameters["dropout"],
-    ).to(device)
-    model.load_state_dict(checkpoint["model_state_dict"])
-
     als_checkpoint = torch.load(
-        artifact_directory / "als_model.pt",
+        artifact_root / "als" / "model.pt",
         map_location="cpu",
         weights_only=True,
     )
@@ -93,9 +104,26 @@ def main():
         als_model=als_model,
     )
     print(f"Test baselines: {baseline_scores}")
+    del als_model
 
-    test_scores = evaluate_sampled_ranking(model, test_loader, device)
-    print(f"MLP test metrics: {test_scores}")
+    for model_name, checkpoint in checkpoints.items():
+        hyperparameters = checkpoint.get(
+            "hyperparameters",
+            DEFAULT_HYPERPARAMETERS,
+        )
+        model = create_implicit_model(
+            model_name,
+            num_users=len(user_to_index),
+            num_items=len(item_to_index),
+            hyperparameters=hyperparameters,
+        ).to(device)
+        model.load_state_dict(checkpoint["model_state_dict"])
+
+        test_scores = evaluate_sampled_ranking(model, test_loader, device)
+        print(f"{model_name.upper()} test metrics: {test_scores}")
+        del model
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
 
 if __name__ == "__main__":

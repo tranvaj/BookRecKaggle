@@ -63,7 +63,7 @@ def main():
         global_mean=global_mean,
     ).to(device)
     loss_function = nn.MSELoss()
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-5)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=0.0001)
     epochs = 10
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer,

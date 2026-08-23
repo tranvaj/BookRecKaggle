@@ -16,7 +16,7 @@ from bookrec.implicit.baselines import (
 from bookrec.implicit.datasets import ImplicitDataset, SampledRankingDataset
 from bookrec.implicit.hyperparameters import load_hyperparameters
 from bookrec.implicit.metrics import mean_reciprocal_rank, ndcg_at_k, recall_at_k
-from bookrec.implicit.model import ImplicitRecommenderMLP
+from bookrec.implicit.model import MODEL_REGISTRY, create_implicit_model
 from bookrec.training import train_loop
 
 
@@ -78,18 +78,30 @@ class ImplicitTests(unittest.TestCase):
             negatives_per_positive=2,
         )
         loader = DataLoader(dataset, batch_size=2)
-        model = ImplicitRecommenderMLP(2, 20, embedding_dim=4)
-        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+        hyperparameters = {
+            "embedding_dim": 4,
+            "hidden_dims": (8, 4),
+            "dropout": 0.0,
+        }
 
-        losses = train_loop(
-            loader,
-            model,
-            torch.nn.BCEWithLogitsLoss(),
-            optimizer,
-            torch.device("cpu"),
-        )
+        for model_name in MODEL_REGISTRY:
+            with self.subTest(model=model_name):
+                model = create_implicit_model(
+                    model_name,
+                    num_users=2,
+                    num_items=20,
+                    hyperparameters=hyperparameters,
+                )
+                optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+                losses = train_loop(
+                    loader,
+                    model,
+                    torch.nn.BCEWithLogitsLoss(),
+                    optimizer,
+                    torch.device("cpu"),
+                )
 
-        self.assertTrue(all(np.isfinite(loss) for loss in losses))
+                self.assertTrue(all(np.isfinite(loss) for loss in losses))
 
     def test_most_popular_uses_training_interaction_counts(self):
         baseline = MostPopularBaseline.fit(

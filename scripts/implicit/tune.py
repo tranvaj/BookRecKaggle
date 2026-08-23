@@ -1,3 +1,4 @@
+import argparse
 import gc
 import json
 import random
@@ -19,7 +20,7 @@ from bookrec.data import (
 from bookrec.implicit.datasets import ImplicitDataset, SampledRankingDataset
 from bookrec.implicit.hyperparameters import ARCHITECTURES
 from bookrec.implicit.metrics import ndcg_at_50
-from bookrec.implicit.model import ImplicitRecommenderMLP
+from bookrec.implicit.model import MODEL_REGISTRY, create_implicit_model
 from bookrec.training import train_loop, validation_loop
 
 
@@ -37,7 +38,18 @@ def set_seed(seed: int):
         torch.cuda.manual_seed_all(seed)
 
 
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--model",
+        choices=MODEL_REGISTRY,
+        required=True,
+    )
+    return parser.parse_args()
+
+
 def main():
+    args = parse_args()
     set_seed(SEED)
     interactions = load_dataset()
     train, validation, _ = split_interactions(interactions, seed=SEED)
@@ -99,12 +111,15 @@ def main():
             log=True,
         )
 
-        model = ImplicitRecommenderMLP(
+        model = create_implicit_model(
+            args.model,
             num_users=len(user_to_index),
             num_items=len(item_to_index),
-            embedding_dim=embedding_dim,
-            hidden_dims=ARCHITECTURES[architecture],
-            dropout=dropout,
+            hyperparameters={
+                "embedding_dim": embedding_dim,
+                "hidden_dims": ARCHITECTURES[architecture],
+                "dropout": dropout,
+            },
         ).to(device)
         optimizer = torch.optim.AdamW(
             model.parameters(),
@@ -148,10 +163,10 @@ def main():
                 torch.cuda.empty_cache()
             gc.collect()
 
-    artifact_directory = Path("artifacts/implicit")
+    artifact_directory = Path("artifacts/implicit") / args.model
     artifact_directory.mkdir(parents=True, exist_ok=True)
     study = optuna.create_study(
-        study_name="implicit_mlp",
+        study_name=f"implicit_{args.model}",
         direction="maximize",
         storage=f"sqlite:///{artifact_directory / 'hpo.db'}",
         load_if_exists=True,
