@@ -25,7 +25,8 @@ bookrec/
 │   └── evaluation.py
 └── explicit/
     ├── datasets.py          # Numeric rating examples
-    ├── model.py             # Bias-aware rating MLP
+    ├── model.py             # Explicit-rating MLP
+    ├── hyperparameters.py   # HPO search space and defaults
     ├── metrics.py           # RMSE and MAE
     ├── baselines.py         # Global/user/item means
     └── evaluation.py
@@ -37,6 +38,7 @@ scripts/
 │   ├── train_als.py         # Train the ALS baseline
 │   └── evaluate.py          # Compare models on the test set
 └── explicit/
+    ├── tune.py
     ├── train.py
     └── evaluate.py
 ```
@@ -92,13 +94,19 @@ evaluation that compares all models on the same test candidates:
 Only ratings from 1 through 10 are used. The prediction is:
 
 ```text
-global mean + user bias + item bias + MLP(user embedding, item embedding)
+MLP(user embedding, item embedding)
 ```
 
 The model is trained with MSE and evaluated against global-, user-, and item-mean
 baselines using RMSE and MAE.
 
+Optuna runs 25 resumable trials and minimizes validation RMSE. The selected
+configuration is saved to `artifacts/explicit/mlp/best_hparams.json`; training
+uses the defaults when that file does not exist. The explicit MLP writes all of
+its artifacts beneath `artifacts/explicit/mlp/`.
+
 ```bash
+.venv/bin/python -m scripts.explicit.tune
 .venv/bin/python -m scripts.explicit.train
 .venv/bin/python -m scripts.explicit.evaluate
 ```

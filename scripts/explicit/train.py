@@ -15,11 +15,15 @@ from bookrec.data import (
 )
 from bookrec.explicit.datasets import ExplicitDataset
 from bookrec.explicit.evaluation import RATING_METRICS
+from bookrec.explicit.hyperparameters import load_hyperparameters
 from bookrec.explicit.model import ExplicitRecommenderMLP
 from bookrec.training import train as train_model
 
 
 SEED = 42
+EPOCHS = 100
+BATCH_SIZE = 1024
+MODEL_NAME = "mlp"
 
 
 def set_seed(seed: int):
@@ -32,6 +36,11 @@ def set_seed(seed: int):
 
 def main():
     set_seed(SEED)
+    artifact_directory = Path("artifacts/explicit") / MODEL_NAME
+    hyperparameters = load_hyperparameters(
+        artifact_directory / "best_hparams.json"
+    )
+    print(f"Training hyperparameters: {hyperparameters}")
     ratings = load_dataset()
     explicit_ratings = ratings[ratings[RATING_COLUMN] > 0].reset_index(drop=True)
     train, validation, _ = split_interactions(explicit_ratings, seed=SEED)
@@ -46,31 +55,34 @@ def main():
 
     train_loader = DataLoader(
         ExplicitDataset(train_data),
-        batch_size=1_024,
+        batch_size=BATCH_SIZE,
         shuffle=True,
     )
     validation_loader = DataLoader(
         ExplicitDataset(validation_data),
-        batch_size=2_048,
+        batch_size=BATCH_SIZE,
         shuffle=False,
     )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    global_mean = float(train[RATING_COLUMN].mean())
     model = ExplicitRecommenderMLP(
         num_users=len(user_to_index),
         num_items=len(item_to_index),
-        global_mean=global_mean,
+        embedding_dim=hyperparameters["embedding_dim"],
+        hidden_dims=hyperparameters["hidden_dims"],
+        dropout=hyperparameters["dropout"],
     ).to(device)
     loss_function = nn.MSELoss()
-    optimizer = torch.optim.AdamW(model.parameters(), lr=0.0001)
-    epochs = 10
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=hyperparameters["learning_rate"],
+        weight_decay=hyperparameters["weight_decay"],
+    )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer,
-        T_max=epochs,
+        T_max=EPOCHS,
     )
 
-    artifact_directory = Path("artifacts/explicit")
     artifact_directory.mkdir(parents=True, exist_ok=True)
     model, _, _, _ = train_model(
         model=model,
@@ -79,13 +91,13 @@ def main():
         loss=loss_function,
         optimizer=optimizer,
         scheduler=scheduler,
-        epochs=epochs,
+        epochs=EPOCHS,
         val_metrics=RATING_METRICS,
         save_val_metric="rmse",
         device=device,
         output_path=artifact_directory / "best_model.pt",
         load_best_model=True,
-        early_stopping_patience=3,
+        early_stopping_patience=5,
         metric_mode="min",
     )
 
@@ -94,7 +106,7 @@ def main():
             "model_state_dict": model.state_dict(),
             "user_to_index": user_to_index,
             "item_to_index": item_to_index,
-            "global_mean": global_mean,
+            "hyperparameters": hyperparameters,
         },
         artifact_directory / "model_with_mappings.pt",
     )

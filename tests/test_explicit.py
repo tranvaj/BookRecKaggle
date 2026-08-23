@@ -1,4 +1,7 @@
+import json
+import tempfile
 import unittest
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -7,6 +10,7 @@ from torch.utils.data import DataLoader
 
 from bookrec.explicit.baselines import MeanBaselines, evaluate_mean_baselines
 from bookrec.explicit.datasets import ExplicitDataset
+from bookrec.explicit.hyperparameters import load_hyperparameters
 from bookrec.explicit.metrics import mae, rmse
 from bookrec.explicit.model import ExplicitRecommenderMLP
 from bookrec.training import train_loop
@@ -35,7 +39,7 @@ class ExplicitTests(unittest.TestCase):
 
     def test_model_trains_for_one_epoch(self):
         loader = DataLoader(ExplicitDataset(self.encoded), batch_size=2)
-        model = ExplicitRecommenderMLP(2, 2, global_mean=5.5, embedding_dim=4)
+        model = ExplicitRecommenderMLP(2, 2, embedding_dim=4)
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
         losses = train_loop(
@@ -61,6 +65,25 @@ class ExplicitTests(unittest.TestCase):
             set(report.index),
             {"global_mean", "user_mean", "item_mean"},
         )
+
+    def test_saved_hyperparameters_are_loaded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "best_hparams.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "embedding_dim": 8,
+                        "hidden_dims": [32, 16],
+                        "learning_rate": 3e-4,
+                    }
+                )
+            )
+            hyperparameters = load_hyperparameters(path)
+
+        self.assertEqual(hyperparameters["embedding_dim"], 8)
+        self.assertEqual(hyperparameters["hidden_dims"], (32, 16))
+        self.assertEqual(hyperparameters["learning_rate"], 3e-4)
+        self.assertIn("dropout", hyperparameters)
 
 
 if __name__ == "__main__":

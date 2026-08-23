@@ -14,21 +14,27 @@ from bookrec.data import (
 from bookrec.explicit.baselines import evaluate_mean_baselines
 from bookrec.explicit.datasets import ExplicitDataset
 from bookrec.explicit.evaluation import evaluate_ratings
+from bookrec.explicit.hyperparameters import DEFAULT_HYPERPARAMETERS
 from bookrec.explicit.model import ExplicitRecommenderMLP
 
 
 SEED = 42
+MODEL_NAME = "mlp"
 
 
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     checkpoint = torch.load(
-        Path("artifacts/explicit/model_with_mappings.pt"),
+        Path("artifacts/explicit") / MODEL_NAME / "model_with_mappings.pt",
         map_location="cpu",
         weights_only=False,
     )
     user_to_index = checkpoint["user_to_index"]
     item_to_index = checkpoint["item_to_index"]
+    hyperparameters = checkpoint.get(
+        "hyperparameters",
+        DEFAULT_HYPERPARAMETERS,
+    )
 
     ratings = load_dataset()
     explicit_ratings = ratings[ratings[RATING_COLUMN] > 0].reset_index(drop=True)
@@ -51,7 +57,9 @@ def main():
     model = ExplicitRecommenderMLP(
         num_users=len(user_to_index),
         num_items=len(item_to_index),
-        global_mean=checkpoint["global_mean"],
+        embedding_dim=hyperparameters["embedding_dim"],
+        hidden_dims=tuple(hyperparameters["hidden_dims"]),
+        dropout=hyperparameters["dropout"],
     ).to(device)
     model.load_state_dict(checkpoint["model_state_dict"])
 
