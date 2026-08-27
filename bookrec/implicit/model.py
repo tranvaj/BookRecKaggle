@@ -44,7 +44,12 @@ class ImplicitRecommenderNeuMF(nn.Module):
         ):
             nn.init.normal_(embedding.weight, std=0.05)
 
-    def forward(self, users: torch.Tensor, items: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        users: torch.Tensor,
+        items: torch.Tensor,
+        **_: torch.Tensor,
+    ) -> torch.Tensor:
         gmf_features = (
             self.gmf_user_embedding(users)
             * self.gmf_item_embedding(items)
@@ -92,11 +97,82 @@ class ImplicitRecommenderMLP(nn.Module):
         nn.init.normal_(self.user_embedding.weight, std=0.05)
         nn.init.normal_(self.item_embedding.weight, std=0.05)
 
-    def forward(self, users: torch.Tensor, items: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        users: torch.Tensor,
+        items: torch.Tensor,
+        **_: torch.Tensor,
+    ) -> torch.Tensor:
         features = torch.cat(
             (self.user_embedding(users), self.item_embedding(items)),
             dim=-1,
         )
+        return self.mlp(features).squeeze(-1)
+
+
+class ImplicitHistoryMLP(nn.Module):
+    """Score candidates from a sparse binary item-history projection."""
+
+    def __init__(
+        self,
+        num_items: int,
+        embedding_dim: int = 32,
+        hidden_dims: tuple[int, ...] = (64, 32),
+        dropout: float = 0.2,
+    ):
+        super().__init__()
+        if num_items < 1:
+            raise ValueError("num_items must be positive")
+
+        self.history_encoder = nn.EmbeddingBag(
+            num_items,
+            embedding_dim,
+            mode="sum",
+            include_last_offset=False,
+        )
+        self.item_embedding = nn.Embedding(num_items, embedding_dim)
+
+        layers: list[nn.Module] = []
+        input_dim = embedding_dim * 2
+        for hidden_dim in hidden_dims:
+            layers.extend(
+                (nn.Linear(input_dim, hidden_dim), nn.ReLU(), nn.Dropout(dropout))
+            )
+            input_dim = hidden_dim
+        layers.append(nn.Linear(input_dim, 1))
+        self.mlp = nn.Sequential(*layers)
+
+        nn.init.normal_(self.history_encoder.weight, std=0.05)
+        nn.init.normal_(self.item_embedding.weight, std=0.05)
+
+    def forward(
+        self,
+        users: torch.Tensor,
+        items: torch.Tensor,
+        history_items: torch.Tensor,
+        history_offset: torch.Tensor,
+        **_: torch.Tensor,
+    ) -> torch.Tensor:
+        del users
+        history_features = self.history_encoder(
+            history_items,
+            history_offset,
+        )
+        if history_features.shape[0] != items.shape[0]:
+            raise ValueError(
+                "Expected one history offset for each grouped candidate sample"
+            )
+
+        candidate_features = self.item_embedding(items)
+        if items.ndim == 1:
+            expanded_history = history_features
+        else:
+            expanded_history = history_features
+            for _ in range(items.ndim - 1):
+                expanded_history = expanded_history.unsqueeze(1)
+            expanded_history = expanded_history.expand(*items.shape, -1)
+
+        features = torch.cat((expanded_history, candidate_features), dim=-1)
         return self.mlp(features).squeeze(-1)
 
 
@@ -112,9 +188,17 @@ class ImplicitProbabilityDeepEnsemble(nn.Module):
             raise ValueError("A deep ensemble requires at least two members")
         self.members = nn.ModuleList(members)
 
-    def forward(self, users: torch.Tensor, items: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        users: torch.Tensor,
+        items: torch.Tensor,
+        **kwargs: torch.Tensor,
+    ) -> torch.Tensor:
         return torch.stack(
-            [torch.sigmoid(member(users, items)) for member in self.members],
+            [
+                torch.sigmoid(member(users, items, **kwargs))
+                for member in self.members
+            ],
             dim=0,
         ).mean(dim=0)
 
@@ -122,6 +206,7 @@ class ImplicitProbabilityDeepEnsemble(nn.Module):
 MODEL_REGISTRY = {
     "mlp": ImplicitRecommenderMLP,
     "neumf": ImplicitRecommenderNeuMF,
+    "history_mlp": ImplicitHistoryMLP,
 }
 
 
@@ -139,10 +224,12 @@ def create_implicit_model(
             f"Unknown implicit model '{model_name}'. Choose from: {choices}"
         ) from error
 
-    return model_class(
-        num_users=num_users,
-        num_items=num_items,
-        embedding_dim=hyperparameters["embedding_dim"],
-        hidden_dims=tuple(hyperparameters["hidden_dims"]),
-        dropout=hyperparameters["dropout"],
-    )
+    model_kwargs = {
+        "num_items": num_items,
+        "embedding_dim": hyperparameters["embedding_dim"],
+        "hidden_dims": tuple(hyperparameters["hidden_dims"]),
+        "dropout": hyperparameters["dropout"],
+    }
+    if model_name != "history_mlp":
+        model_kwargs["num_users"] = num_users
+    return model_class(**model_kwargs)

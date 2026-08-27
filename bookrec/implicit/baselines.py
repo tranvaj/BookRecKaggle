@@ -16,7 +16,12 @@ BASELINE_METRICS = [recall_at_50, ndcg_at_50, recall_at_100]
 class RandomBaseline(nn.Module):
     """Assign fresh random scores to candidate items."""
 
-    def forward(self, users: torch.Tensor, items: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        users: torch.Tensor,
+        items: torch.Tensor,
+        **_: torch.Tensor,
+    ) -> torch.Tensor:
         return torch.rand(items.shape, device=items.device)
 
 
@@ -40,7 +45,12 @@ class MostPopularBaseline(nn.Module):
         counts = torch.bincount(items, minlength=num_items)
         return cls(torch.log1p(counts))
 
-    def forward(self, users: torch.Tensor, items: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        users: torch.Tensor,
+        items: torch.Tensor,
+        **_: torch.Tensor,
+    ) -> torch.Tensor:
         return self.item_scores[items]
 
 
@@ -93,7 +103,12 @@ class ALSBaseline(nn.Module):
             torch.from_numpy(model.item_factors),
         )
 
-    def forward(self, users: torch.Tensor, items: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        users: torch.Tensor,
+        items: torch.Tensor,
+        **_: torch.Tensor,
+    ) -> torch.Tensor:
         user_factors = self.user_factors[users]
         item_factors = self.item_factors[items]
         return (user_factors * item_factors).sum(dim=-1)

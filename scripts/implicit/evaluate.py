@@ -9,7 +9,10 @@ from torch.utils.data import DataLoader
 
 from bookrec.data import encode_interactions, load_dataset, split_interactions
 from bookrec.implicit.baselines import ALSBaseline, evaluate_ranking_baselines
-from bookrec.implicit.datasets import SampledRankingDataset
+from bookrec.implicit.datasets import (
+    SampledRankingDataset,
+    collate_implicit_batch,
+)
 from bookrec.implicit.evaluation import evaluate_sampled_ranking
 from bookrec.implicit.hyperparameters import DEFAULT_HYPERPARAMETERS
 from bookrec.implicit.model import (
@@ -97,19 +100,45 @@ def main():
         item_to_index,
     )
     test_data = encode_interactions(test, user_to_index, item_to_index)
+    test_context = pd.concat(
+        [train_data, validation_data],
+        ignore_index=True,
+    )
     all_interactions = pd.concat(
         [train_data, validation_data, test_data],
         ignore_index=True,
     )
 
-    test_dataset = SampledRankingDataset(
+    singleton_test_dataset = SampledRankingDataset(
         test_data,
-        all_interactions,
+        context_interactions=test_context,
+        all_interactions=all_interactions,
         num_items=len(item_to_index),
         num_candidates=EVALUATION_CANDIDATES,
         seed=SEED + 1,
+        context_mode="singleton",
     )
-    test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False)
+    full_history_test_dataset = SampledRankingDataset(
+        test_data,
+        context_interactions=test_context,
+        all_interactions=all_interactions,
+        num_items=len(item_to_index),
+        num_candidates=EVALUATION_CANDIDATES,
+        seed=SEED + 1,
+        context_mode="full",
+    )
+    singleton_test_loader = DataLoader(
+        singleton_test_dataset,
+        batch_size=64,
+        shuffle=False,
+        collate_fn=collate_implicit_batch,
+    )
+    full_history_test_loader = DataLoader(
+        full_history_test_dataset,
+        batch_size=64,
+        shuffle=False,
+        collate_fn=collate_implicit_batch,
+    )
 
     als_checkpoint = torch.load(
         artifact_root / "als" / "model.pt",
@@ -123,7 +152,7 @@ def main():
 
     baseline_scores = evaluate_ranking_baselines(
         train_data,
-        test_loader,
+        singleton_test_loader,
         num_items=len(item_to_index),
         device=device,
         als_model=als_model,
@@ -144,8 +173,32 @@ def main():
         ).to(device)
         model.load_state_dict(checkpoint["model_state_dict"])
 
-        test_scores = evaluate_sampled_ranking(model, test_loader, device)
-        print(f"{model_name.upper()} test metrics: {test_scores}")
+        if model_name == "history_mlp":
+            full_history_scores = evaluate_sampled_ranking(
+                model,
+                full_history_test_loader,
+                device,
+            )
+            print(
+                "HISTORY_MLP full-history test metrics: "
+                f"{full_history_scores}"
+            )
+            singleton_scores = evaluate_sampled_ranking(
+                model,
+                singleton_test_loader,
+                device,
+            )
+            print(
+                "HISTORY_MLP singleton-context test metrics: "
+                f"{singleton_scores}"
+            )
+        else:
+            test_scores = evaluate_sampled_ranking(
+                model,
+                singleton_test_loader,
+                device,
+            )
+            print(f"{model_name.upper()} test metrics: {test_scores}")
         del model
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
@@ -183,15 +236,36 @@ def main():
         member.load_state_dict(checkpoint["model_state_dict"])
         members.append(member)
     ensemble_model = ImplicitProbabilityDeepEnsemble(members).to(device)
-    test_scores = evaluate_sampled_ranking(
-        ensemble_model,
-        test_loader,
-        device,
-    )
-    print(
+    ensemble_label = (
         f"{ensemble_model_type.upper()} PROBABILITY ENSEMBLE "
-        f"({len(members)} members) test metrics: {test_scores}"
+        f"({len(members)} members)"
     )
+    if ensemble_model_type == "history_mlp":
+        full_history_scores = evaluate_sampled_ranking(
+            ensemble_model,
+            full_history_test_loader,
+            device,
+        )
+        print(
+            f"{ensemble_label} full-history test metrics: "
+            f"{full_history_scores}"
+        )
+        singleton_scores = evaluate_sampled_ranking(
+            ensemble_model,
+            singleton_test_loader,
+            device,
+        )
+        print(
+            f"{ensemble_label} singleton-context test metrics: "
+            f"{singleton_scores}"
+        )
+    else:
+        test_scores = evaluate_sampled_ranking(
+            ensemble_model,
+            singleton_test_loader,
+            device,
+        )
+        print(f"{ensemble_label} test metrics: {test_scores}")
 
 
 if __name__ == "__main__":

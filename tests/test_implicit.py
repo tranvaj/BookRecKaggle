@@ -14,11 +14,16 @@ from bookrec.implicit.baselines import (
     MostPopularBaseline,
     RandomBaseline,
 )
-from bookrec.implicit.datasets import ImplicitDataset, SampledRankingDataset
+from bookrec.implicit.datasets import (
+    ImplicitDataset,
+    SampledRankingDataset,
+    collate_implicit_batch,
+)
 from bookrec.implicit.hyperparameters import load_hyperparameters
 from bookrec.implicit.metrics import mean_reciprocal_rank, ndcg_at_k, recall_at_k
 from bookrec.implicit.model import (
     MODEL_REGISTRY,
+    ImplicitHistoryMLP,
     ImplicitProbabilityDeepEnsemble,
     ImplicitRecommenderMLP,
     create_implicit_model,
@@ -48,8 +53,31 @@ class ImplicitTests(unittest.TestCase):
 
         self.assertEqual(sample["users"].shape, (5,))
         self.assertEqual(sample["label"].sum().item(), 1.0)
+        positive_item = sample["items"][sample["label"] == 1].item()
+        self.assertNotIn(positive_item, sample["history_items"].tolist())
         negative_items = sample["items"][sample["label"] == 0].tolist()
         self.assertTrue(set(negative_items).isdisjoint({0, 1, 2}))
+        self.assertTrue(
+            set(negative_items).isdisjoint(sample["history_items"].tolist())
+        )
+
+    def test_history_training_excludes_empty_context_examples(self):
+        interactions = pd.DataFrame(
+            {"user": [0, 1, 1], "item": [0, 1, 2]}
+        )
+
+        dataset = ImplicitDataset(
+            interactions,
+            interactions,
+            num_items=5,
+            negatives_per_positive=2,
+            require_nonempty_history=True,
+        )
+
+        self.assertEqual(len(dataset), 2)
+        self.assertTrue(
+            all(len(dataset[index]["history_items"]) for index in range(2))
+        )
 
     def test_ranking_dataset_contains_all_held_out_positives_per_user(self):
         held_out = pd.DataFrame(
@@ -57,7 +85,8 @@ class ImplicitTests(unittest.TestCase):
         )
         dataset = SampledRankingDataset(
             held_out,
-            self.all_interactions,
+            context_interactions=self.all_interactions,
+            all_interactions=self.all_interactions,
             num_items=20,
             num_candidates=10,
             seed=42,
@@ -68,6 +97,84 @@ class ImplicitTests(unittest.TestCase):
         self.assertEqual(dataset[1]["label"].sum().item(), 1.0)
         self.assertEqual(dataset[0]["items"].unique().numel(), 10)
 
+    def test_singleton_and_full_history_use_identical_rankings(self):
+        context = pd.DataFrame(
+            {"user": [0, 0, 0, 1, 1], "item": [0, 1, 4, 2, 3]}
+        )
+        held_out = pd.DataFrame({"user": [0, 1], "item": [5, 6]})
+        all_interactions = pd.concat([context, held_out], ignore_index=True)
+        common_arguments = {
+            "held_out_interactions": held_out,
+            "context_interactions": context,
+            "all_interactions": all_interactions,
+            "num_items": 20,
+            "num_candidates": 10,
+            "seed": 17,
+        }
+
+        singleton = SampledRankingDataset(
+            **common_arguments,
+            context_mode="singleton",
+        )
+        full = SampledRankingDataset(
+            **common_arguments,
+            context_mode="full",
+        )
+
+        for index in range(len(singleton)):
+            singleton_sample = singleton[index]
+            full_sample = full[index]
+            self.assertTrue(
+                torch.equal(singleton_sample["items"], full_sample["items"])
+            )
+            self.assertTrue(
+                torch.equal(singleton_sample["label"], full_sample["label"])
+            )
+            self.assertEqual(len(singleton_sample["history_items"]), 1)
+            held_out_items = set(
+                held_out.loc[
+                    held_out["user"] == singleton.users[index],
+                    "item",
+                ]
+            )
+            self.assertTrue(
+                held_out_items.isdisjoint(full_sample["history_items"].tolist())
+            )
+            negative_items = full_sample["items"][
+                full_sample["label"] == 0
+            ].tolist()
+            self.assertTrue(
+                set(negative_items).isdisjoint(
+                    full_sample["history_items"].tolist()
+                )
+            )
+
+    def test_collator_flattens_histories_and_builds_offsets(self):
+        samples = [
+            {
+                "users": torch.tensor([0, 0]),
+                "items": torch.tensor([1, 2]),
+                "label": torch.tensor([1.0, 0.0]),
+                "history_items": torch.tensor([3, 4]),
+            },
+            {
+                "users": torch.tensor([1, 1]),
+                "items": torch.tensor([2, 3]),
+                "label": torch.tensor([0.0, 1.0]),
+                "history_items": torch.tensor([5]),
+            },
+        ]
+
+        batch = collate_implicit_batch(samples)
+
+        self.assertTrue(
+            torch.equal(batch["history_items"], torch.tensor([3, 4, 5]))
+        )
+        self.assertTrue(
+            torch.equal(batch["history_offset"], torch.tensor([0, 2]))
+        )
+        self.assertEqual(batch["items"].shape, (2, 2))
+
     def test_ranking_metrics_average_across_users(self):
         labels = np.array([[1, 0, 0], [1, 0, 0]], dtype=np.float32)
         logits = np.array([[3, 2, 1], [2, 3, 1]], dtype=np.float32)
@@ -77,13 +184,6 @@ class ImplicitTests(unittest.TestCase):
         self.assertAlmostEqual(ndcg_at_k(labels, logits, k=3), 0.8154648768)
 
     def test_model_trains_on_grouped_candidates(self):
-        dataset = ImplicitDataset(
-            self.all_interactions,
-            self.all_interactions,
-            num_items=20,
-            negatives_per_positive=2,
-        )
-        loader = DataLoader(dataset, batch_size=2)
         hyperparameters = {
             "embedding_dim": 4,
             "hidden_dims": (8, 4),
@@ -92,6 +192,18 @@ class ImplicitTests(unittest.TestCase):
 
         for model_name in MODEL_REGISTRY:
             with self.subTest(model=model_name):
+                dataset = ImplicitDataset(
+                    self.all_interactions,
+                    self.all_interactions,
+                    num_items=20,
+                    negatives_per_positive=2,
+                    require_nonempty_history=model_name == "history_mlp",
+                )
+                loader = DataLoader(
+                    dataset,
+                    batch_size=2,
+                    collate_fn=collate_implicit_batch,
+                )
                 model = create_implicit_model(
                     model_name,
                     num_users=2,
@@ -109,6 +221,66 @@ class ImplicitTests(unittest.TestCase):
 
                 self.assertTrue(all(np.isfinite(loss) for loss in losses))
 
+    def test_sparse_history_sum_matches_dense_binary_projection(self):
+        model = ImplicitHistoryMLP(
+            num_items=6,
+            embedding_dim=3,
+            hidden_dims=(4,),
+            dropout=0.0,
+        )
+        history_items = torch.tensor([0, 2, 3])
+        history_offset = torch.tensor([0, 2])
+        dense_histories = torch.tensor(
+            [
+                [1.0, 0.0, 1.0, 0.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+            ]
+        )
+
+        sparse_projection = model.history_encoder(
+            history_items,
+            history_offset,
+        )
+        dense_projection = dense_histories @ model.history_encoder.weight
+
+        self.assertTrue(torch.allclose(sparse_projection, dense_projection))
+
+    def test_history_model_uses_history_and_items_but_not_users(self):
+        model = ImplicitHistoryMLP(
+            num_items=5,
+            embedding_dim=2,
+            hidden_dims=(),
+            dropout=0.0,
+        )
+        with torch.no_grad():
+            model.history_encoder.weight.zero_()
+            model.history_encoder.weight[0] = torch.tensor([1.0, 0.0])
+            model.history_encoder.weight[1] = torch.tensor([2.0, 0.0])
+            model.item_embedding.weight.zero_()
+            model.item_embedding.weight[2] = torch.tensor([0.0, 1.0])
+            model.item_embedding.weight[3] = torch.tensor([0.0, 2.0])
+            model.mlp[0].weight.fill_(1.0)
+            model.mlp[0].bias.zero_()
+
+        candidates = torch.tensor([[2, 3], [2, 3]])
+        histories = torch.tensor([0, 1])
+        offsets = torch.tensor([0, 1])
+        first_users = torch.tensor([[0, 0], [1, 1]])
+        other_users = torch.tensor([[4, 4], [3, 3]])
+
+        scores = model(first_users, candidates, histories, offsets)
+        other_user_scores = model(other_users, candidates, histories, offsets)
+
+        self.assertEqual(scores.shape, candidates.shape)
+        self.assertTrue(torch.isfinite(scores).all())
+        self.assertTrue(torch.equal(scores, other_user_scores))
+        self.assertNotEqual(scores[0, 0].item(), scores[1, 0].item())
+        self.assertNotEqual(scores[0, 0].item(), scores[0, 1].item())
+        self.assertNotEqual(
+            model.history_encoder.weight.data_ptr(),
+            model.item_embedding.weight.data_ptr(),
+        )
+
     def test_most_popular_uses_training_interaction_counts(self):
         baseline = MostPopularBaseline.fit(
             self.all_interactions,
@@ -117,6 +289,8 @@ class ImplicitTests(unittest.TestCase):
         scores = baseline(
             users=torch.tensor([0, 0, 0]),
             items=torch.tensor([0, 3, 5]),
+            history_items=torch.tensor([1]),
+            history_offset=torch.tensor([0]),
         )
 
         self.assertEqual(scores[0].item(), scores[1].item())
@@ -126,7 +300,11 @@ class ImplicitTests(unittest.TestCase):
         users = torch.tensor([[0, 0, 0], [1, 1, 1]])
         items = torch.tensor([[2, 3, 4], [2, 3, 4]])
 
-        scores = RandomBaseline()(users, items)
+        history_arguments = {
+            "history_items": torch.tensor([0, 1]),
+            "history_offset": torch.tensor([0, 1]),
+        }
+        scores = RandomBaseline()(users, items, **history_arguments)
 
         self.assertEqual(scores.shape, items.shape)
         self.assertTrue(torch.all((scores >= 0) & (scores < 1)))
@@ -142,7 +320,12 @@ class ImplicitTests(unittest.TestCase):
         users = torch.tensor([[0, 0], [1, 1]])
         items = torch.tensor([[0, 3], [1, 4]])
 
-        scores = baseline(users, items)
+        scores = baseline(
+            users,
+            items,
+            history_items=torch.tensor([0, 1]),
+            history_offset=torch.tensor([0, 1]),
+        )
 
         self.assertEqual(scores.shape, items.shape)
         self.assertTrue(torch.isfinite(scores).all())
@@ -183,6 +366,31 @@ class ImplicitTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "at least two members"):
             ImplicitProbabilityDeepEnsemble([member])
+
+    def test_history_ensemble_averages_member_probabilities(self):
+        members = [
+            ImplicitHistoryMLP(
+                num_items=5,
+                embedding_dim=2,
+                hidden_dims=(4,),
+                dropout=0.0,
+            )
+            for _ in range(2)
+        ]
+        ensemble = ImplicitProbabilityDeepEnsemble(members)
+        arguments = {
+            "users": torch.tensor([[0, 0], [1, 1]]),
+            "items": torch.tensor([[2, 3], [3, 4]]),
+            "history_items": torch.tensor([0, 1, 2]),
+            "history_offset": torch.tensor([0, 2]),
+        }
+
+        scores = ensemble(**arguments)
+        expected = torch.stack(
+            [torch.sigmoid(member(**arguments)) for member in members]
+        ).mean(dim=0)
+
+        self.assertTrue(torch.allclose(scores, expected))
 
     def test_ensemble_seed_defaults_and_validation(self):
         self.assertEqual(default_seeds(4), [100, 110, 120, 130])

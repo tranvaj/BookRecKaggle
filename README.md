@@ -1,10 +1,11 @@
 # Book recommendation
 
-This project explores Book-Crossing recommendations as two separate collaborative
+This project explores Book-Crossing recommendations as two collaborative-
 filtering tasks:
 
-- **Implicit feedback:** every recorded user-book row is an interaction. The model
-  learns from observed positives and dynamically sampled unobserved pairs.
+- **Implicit feedback:** every recorded user-book row is an interaction. Models
+  can rank books from either a known user ID or a sparse binary history such as a
+  single favorite book.
 - **Explicit feedback:** ratings from 1 through 10 are modeled as numeric targets;
   rating-zero rows are excluded from this task.
 
@@ -18,10 +19,10 @@ bookrec/
 ├── data.py                   # Loading, splitting, and ID encoding
 ├── training.py               # Shared training and evaluation loops
 ├── implicit/
-│   ├── datasets.py          # Negative sampling and user-level evaluation
+│   ├── datasets.py          # Negative sampling and sparse-history batching
 │   ├── baselines.py         # Random, popularity, and implicit ALS
-│   ├── model.py             # MLP, NeuMF, and probability ensemble
-│   ├── metrics.py           # Recall@K, NDCG@K, MRR, BCE
+│   ├── model.py             # ID models, history MLP, and ensembles
+│   ├── metrics.py           # Ranking metrics
 │   └── evaluation.py
 └── explicit/
     ├── datasets.py          # Numeric rating examples
@@ -33,7 +34,7 @@ bookrec/
 
 scripts/
 ├── implicit/
-│   ├── tune.py              # Tune MLP or NeuMF with Optuna
+│   ├── tune.py              # Tune neural models with Optuna
 │   ├── train.py             # Train a model or deep-ensemble member
 │   ├── train_ensemble.py    # Train multiple independent members
 │   ├── train_als.py         # Train the ALS baseline
@@ -45,23 +46,61 @@ scripts/
     └── evaluate.py
 ```
 
+## History-vector model
+
+This is the direct solution to “I like *The Lord of the Rings*, what else
+should I read?” The `history_mlp` model does not have a user-ID embedding.
+Instead, it projects the books in the supplied interaction history, combines
+that representation with each candidate-book embedding, and scores the pair
+with the same MLP structure used by the ID-based model:
+
+```text
+history = sum(history_embedding[known_book] for known_book in known_books)
+score = MLP(concat(history, candidate_embedding[candidate_book]))
+```
+
+Histories are conceptually binary vectors over all books. They are passed as
+only their nonzero item IDs and summed with `EmbeddingBag`, which is exactly a
+bias-free linear projection of the dense binary vector without allocating it.
+The history and candidate embeddings are separate learned matrices.
+
+For every training positive, its context is the user's complete training
+history with that target removed. Evaluation reports two views over identical
+candidates: full history is the primary personalization result, while singleton
+context is the secondary one-book-query diagnostic. Validation contexts contain
+training interactions; test contexts contain training plus validation
+interactions. Held-out targets never enter the context, and the input book is
+not a candidate negative.
+
+```bash
+.venv/bin/python -m scripts.implicit.tune --model history_mlp
+.venv/bin/python -m scripts.implicit.train --model history_mlp
+.venv/bin/python -m scripts.implicit.train_ensemble \
+  --model history_mlp --num-members 5
+.venv/bin/python -m scripts.implicit.evaluate \
+  --ensemble-dir artifacts/implicit/history_mlp_ensemble
+```
+
+This iteration evaluates encoded interaction data only. It deliberately does
+not add title/ISBN resolution or a title-based serving CLI.
+
 ## Implicit model
 
-All rows, including `Book-Rating == 0`, are positive interactions. Four unobserved
-items are sampled for every positive during training. Validation and test use one
-fixed ranking per user containing all held-out positives and enough sampled
-unobserved items to reach 1,000 candidates.
+All rows, including `Book-Rating == 0`, are positive interactions. Unobserved
+items are dynamically sampled for every positive during training. Validation
+and test use one fixed ranking per user containing all held-out positives and
+enough sampled unobserved items to reach 1,000 candidates.
 
-Two neural models are available: a concatenation-only MLP and NeuMF, which
-combines a GMF branch with an MLP branch. Both return raw logits and are trained
-with `BCEWithLogitsLoss`. Model selection uses NDCG@50; test reporting includes
-Recall@50, NDCG@50, and Recall@100.
+Three neural models are available: a user-ID MLP, NeuMF, and `history_mlp`.
+They return raw logits and are trained with `BCEWithLogitsLoss`. Model selection
+uses NDCG@50; `history_mlp` uses full history for model selection. Test reporting
+includes Recall@50, NDCG@50, and Recall@100.
 It is compared with random ranking, most-popular items, and implicit ALS using
-the same sampled test candidates. The improved implicit model is a deep ensemble
-of independently trained copies of the exact same MLP architecture. The number
-of members and their seeds are configurable, and their probabilities are
-averaged directly. It contains no calibration layer, ALS component, graph
-network, secondary architecture, popularity blend, or other hybrid component.
+the same sampled test candidates. Each neural architecture can also be used as a
+deep ensemble of independently trained copies of that exact architecture. The
+number of members and their seeds are configurable, and their probabilities are
+averaged directly. There is no calibration layer, ALS component, graph network,
+secondary architecture, popularity blend, or other hybrid component.
 
 Optuna runs a separate resumable study for each neural model and maximizes
 validation NDCG@50. Each model keeps its hyperparameters and checkpoints in its
@@ -79,12 +118,21 @@ artifacts/implicit/
 │   ├── best_hparams.json
 │   ├── best_model.pt
 │   └── model_with_mappings.pt
+├── history_mlp/
+│   ├── hpo.db
+│   ├── best_hparams.json
+│   ├── best_model.pt
+│   └── model_with_mappings.pt
 ├── als/
 │   └── model.pt
-└── mlp_ensemble/
+├── mlp_ensemble/
 │   ├── seed_100/model_with_mappings.pt
 │   ├── seed_110/model_with_mappings.pt
 │   └── seed_120/model_with_mappings.pt
+└── history_mlp_ensemble/
+    ├── seed_100/model_with_mappings.pt
+    ├── seed_110/model_with_mappings.pt
+    └── seed_120/model_with_mappings.pt
 ```
 
 Tune and train each neural model independently. The original MLP checkpoint is
@@ -94,8 +142,10 @@ each independent member in a `seed_<n>` directory:
 ```bash
 .venv/bin/python -m scripts.implicit.tune --model mlp
 .venv/bin/python -m scripts.implicit.tune --model neumf
+.venv/bin/python -m scripts.implicit.tune --model history_mlp
 .venv/bin/python -m scripts.implicit.train --model mlp
 .venv/bin/python -m scripts.implicit.train --model neumf
+.venv/bin/python -m scripts.implicit.train --model history_mlp
 .venv/bin/python -m scripts.implicit.train_ensemble --num-members 3
 .venv/bin/python -m scripts.implicit.evaluate \
   --ensemble-dir artifacts/implicit/mlp_ensemble
@@ -148,16 +198,20 @@ user/item pairs for explicit rating prediction.
 |---|---:|---:|---:|
 | MLP | 0.5487 | 0.2918 | 0.6442 |
 | NeuMF | 0.5388 | 0.2956 | 0.6276 |
-| MLP probability ensemble | **0.5769** | **0.3043** | **0.6773** |
+| MLP probability ensemble (5) | **0.5879** | **0.3150** | **0.6855** |
 
 | Explicit model | RMSE | MAE |
 |---|---:|---:|
 | MLP | 1.6070 | 1.2327 |
-| MLP ensemble (3) | **1.5882** | **1.2228** |
+| MLP ensemble (5) | **1.5849** | **1.2213** |
 
-Both scripts build user and item mappings from training data. Validation/test
-interactions with cold-start IDs are excluded because ID-only collaborative
-filtering cannot learn embeddings for unseen users or books.
+All tasks build user and item mappings from training data. Validation/test
+interactions with cold-start items are excluded because interaction-only
+collaborative filtering cannot represent unseen books. The history MLP supports
+an anonymous query made from one or more mapped books, while the user-ID MLP and
+NeuMF require a user represented in the training mappings. History MLP results
+are not included above until the new model and ensemble have been trained and
+evaluated.
 
 ## Tests
 

@@ -17,7 +17,11 @@ from bookrec.data import (
     load_dataset,
     split_interactions,
 )
-from bookrec.implicit.datasets import ImplicitDataset, SampledRankingDataset
+from bookrec.implicit.datasets import (
+    ImplicitDataset,
+    SampledRankingDataset,
+    collate_implicit_batch,
+)
 from bookrec.implicit.hyperparameters import ARCHITECTURES
 from bookrec.implicit.metrics import ndcg_at_50
 from bookrec.implicit.model import MODEL_REGISTRY, create_implicit_model
@@ -71,19 +75,28 @@ def main():
         known_interactions,
         num_items=len(item_to_index),
         negatives_per_positive=4,
+        require_nonempty_history=args.model == "history_mlp",
     )
     validation_dataset = SampledRankingDataset(
         validation_data,
-        known_interactions,
+        context_interactions=train_data,
+        all_interactions=known_interactions,
         num_items=len(item_to_index),
         num_candidates=EVALUATION_CANDIDATES,
         seed=SEED,
+        context_mode="full",
     )
-    train_loader = DataLoader(train_dataset, batch_size=512, shuffle=True)
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=512,
+        shuffle=True,
+        collate_fn=collate_implicit_batch,
+    )
     validation_loader = DataLoader(
         validation_dataset,
         batch_size=64,
         shuffle=False,
+        collate_fn=collate_implicit_batch,
     )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
