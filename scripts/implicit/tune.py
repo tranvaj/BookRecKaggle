@@ -108,7 +108,7 @@ def main():
         )
         embedding_dim = trial.suggest_categorical(
             "embedding_dim",
-            [16, 32, 64],
+            [16, 32, 64, 128],
         )
         dropout = trial.suggest_float("dropout", 0.0, 0.4, step=0.1)
         learning_rate = trial.suggest_float(
