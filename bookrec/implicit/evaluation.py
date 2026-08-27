@@ -1,7 +1,6 @@
 import torch
 
 from bookrec.implicit.metrics import (
-    binary_cross_entropy,
     ndcg_at_50,
     recall_at_50,
     recall_at_100
@@ -13,7 +12,6 @@ RANKING_METRICS = [
     recall_at_50,
     ndcg_at_50,
     recall_at_100,
-    binary_cross_entropy,
 ]
 
 

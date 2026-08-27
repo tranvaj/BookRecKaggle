@@ -1,3 +1,4 @@
+import argparse
 import random
 from pathlib import Path
 
@@ -11,7 +12,11 @@ from bookrec.implicit.baselines import ALSBaseline, evaluate_ranking_baselines
 from bookrec.implicit.datasets import SampledRankingDataset
 from bookrec.implicit.evaluation import evaluate_sampled_ranking
 from bookrec.implicit.hyperparameters import DEFAULT_HYPERPARAMETERS
-from bookrec.implicit.model import MODEL_REGISTRY, create_implicit_model
+from bookrec.implicit.model import (
+    MODEL_REGISTRY,
+    ImplicitProbabilityDeepEnsemble,
+    create_implicit_model,
+)
 
 
 SEED = 42
@@ -26,10 +31,30 @@ def set_seed(seed: int):
         torch.cuda.manual_seed_all(seed)
 
 
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--artifact-root",
+        type=Path,
+        default=Path("artifacts/implicit"),
+        help="Directory containing the baseline model checkpoints.",
+    )
+    parser.add_argument(
+        "--ensemble-dir",
+        type=Path,
+        help=(
+            "Directory containing seed_<n>/model_with_mappings.pt members. "
+            "Defaults to <artifact-root>/mlp_ensemble."
+        ),
+    )
+    return parser.parse_args()
+
+
 def main():
+    args = parse_args()
     set_seed(SEED)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    artifact_root = Path("artifacts/implicit")
+    artifact_root = args.artifact_root
     checkpoints = {}
     for model_name in MODEL_REGISTRY:
         checkpoint_path = (
@@ -124,6 +149,49 @@ def main():
         del model
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+
+    ensemble_directory = args.ensemble_dir or artifact_root / "mlp_ensemble"
+    member_paths = sorted(
+        ensemble_directory.glob("seed_*/model_with_mappings.pt")
+    )
+    if len(member_paths) < 2:
+        raise FileNotFoundError(
+            f"Expected at least two ensemble members in {ensemble_directory}. "
+            "Run 'python -m scripts.implicit.train_ensemble'."
+        )
+    member_checkpoints = [
+        torch.load(path, map_location="cpu", weights_only=False)
+        for path in member_paths
+    ]
+    ensemble_model_type = member_checkpoints[0].get("model_type")
+    ensemble_hyperparameters = member_checkpoints[0]["hyperparameters"]
+    members = []
+    for path, checkpoint in zip(member_paths, member_checkpoints):
+        if (
+            checkpoint.get("model_type") != ensemble_model_type
+            or checkpoint["user_to_index"] != user_to_index
+            or checkpoint["item_to_index"] != item_to_index
+            or checkpoint["hyperparameters"] != ensemble_hyperparameters
+        ):
+            raise ValueError(f"Incompatible ensemble member: {path}")
+        member = create_implicit_model(
+            ensemble_model_type,
+            num_users=len(user_to_index),
+            num_items=len(item_to_index),
+            hyperparameters=ensemble_hyperparameters,
+        )
+        member.load_state_dict(checkpoint["model_state_dict"])
+        members.append(member)
+    ensemble_model = ImplicitProbabilityDeepEnsemble(members).to(device)
+    test_scores = evaluate_sampled_ranking(
+        ensemble_model,
+        test_loader,
+        device,
+    )
+    print(
+        f"{ensemble_model_type.upper()} PROBABILITY ENSEMBLE "
+        f"({len(members)} members) test metrics: {test_scores}"
+    )
 
 
 if __name__ == "__main__":

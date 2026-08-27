@@ -100,6 +100,25 @@ class ImplicitRecommenderMLP(nn.Module):
         return self.mlp(features).squeeze(-1)
 
 
+class ImplicitProbabilityDeepEnsemble(nn.Module):
+    """Average probabilities from independent copies of one architecture."""
+
+    def __init__(
+        self,
+        members: list[nn.Module],
+    ):
+        super().__init__()
+        if len(members) < 2:
+            raise ValueError("A deep ensemble requires at least two members")
+        self.members = nn.ModuleList(members)
+
+    def forward(self, users: torch.Tensor, items: torch.Tensor) -> torch.Tensor:
+        return torch.stack(
+            [torch.sigmoid(member(users, items)) for member in self.members],
+            dim=0,
+        ).mean(dim=0)
+
+
 MODEL_REGISTRY = {
     "mlp": ImplicitRecommenderMLP,
     "neumf": ImplicitRecommenderNeuMF,

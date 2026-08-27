@@ -6,13 +6,14 @@ from kagglehub import KaggleDatasetAdapter
 USER_COLUMN = "User-ID"
 ITEM_COLUMN = "ISBN"
 RATING_COLUMN = "Book-Rating"
+DEFAULT_DATASET_HANDLE = "arashnic/book-recommendation-dataset/versions/3"
 
 
 def load_dataset(
     file_path: str = "Ratings.csv",
-    dataset_handle: str = "arashnic/book-recommendation-dataset",
+    dataset_handle: str = DEFAULT_DATASET_HANDLE,
 ) -> pd.DataFrame:
-    """Load one file from the Book-Crossing Kaggle dataset."""
+    """Load one file from the pinned Book-Crossing Kaggle dataset."""
     return kagglehub.dataset_load(
         KaggleDatasetAdapter.PANDAS,
         dataset_handle,

@@ -16,8 +16,14 @@ from bookrec.implicit.baselines import (
 from bookrec.implicit.datasets import ImplicitDataset, SampledRankingDataset
 from bookrec.implicit.hyperparameters import load_hyperparameters
 from bookrec.implicit.metrics import mean_reciprocal_rank, ndcg_at_k, recall_at_k
-from bookrec.implicit.model import MODEL_REGISTRY, create_implicit_model
+from bookrec.implicit.model import (
+    MODEL_REGISTRY,
+    ImplicitProbabilityDeepEnsemble,
+    ImplicitRecommenderMLP,
+    create_implicit_model,
+)
 from bookrec.training import train_loop
+from scripts.implicit.train_ensemble import default_seeds, resolve_seeds
 
 
 class ImplicitTests(unittest.TestCase):
@@ -140,6 +146,52 @@ class ImplicitTests(unittest.TestCase):
 
         self.assertEqual(scores.shape, items.shape)
         self.assertTrue(torch.isfinite(scores).all())
+
+    def test_deep_ensemble_averages_member_probabilities(self):
+        members = [
+            ImplicitRecommenderMLP(
+                num_users=2,
+                num_items=4,
+                embedding_dim=2,
+                hidden_dims=(4,),
+                dropout=0.0,
+            )
+            for _ in range(3)
+        ]
+        model = ImplicitProbabilityDeepEnsemble(members)
+        users = torch.tensor([[0, 0, 0], [1, 1, 1]])
+        items = torch.tensor([[0, 1, 2], [1, 2, 3]])
+
+        scores = model(users, items)
+        expected = torch.stack(
+            [torch.sigmoid(member(users, items)) for member in members]
+        ).mean(dim=0)
+
+        self.assertEqual(scores.shape, items.shape)
+        self.assertTrue(torch.isfinite(scores).all())
+        self.assertTrue(torch.all((scores >= 0) & (scores <= 1)))
+        self.assertTrue(torch.allclose(scores, expected))
+
+    def test_deep_ensemble_requires_at_least_two_members(self):
+        member = ImplicitRecommenderMLP(
+            num_users=2,
+            num_items=4,
+            embedding_dim=2,
+            hidden_dims=(4,),
+            dropout=0.0,
+        )
+
+        with self.assertRaisesRegex(ValueError, "at least two members"):
+            ImplicitProbabilityDeepEnsemble([member])
+
+    def test_ensemble_seed_defaults_and_validation(self):
+        self.assertEqual(default_seeds(4), [100, 110, 120, 130])
+        self.assertEqual(resolve_seeds(3, [7, 17, 42]), [7, 17, 42])
+
+        with self.assertRaisesRegex(ValueError, "Expected 3 seeds"):
+            resolve_seeds(3, [7, 17])
+        with self.assertRaisesRegex(ValueError, "must be unique"):
+            resolve_seeds(3, [7, 7, 17])
 
     def test_saved_hyperparameters_are_loaded(self):
         with tempfile.TemporaryDirectory() as directory:
