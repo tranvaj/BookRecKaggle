@@ -39,3 +39,19 @@ class ExplicitRecommenderMLP(nn.Module):
             dim=-1,
         )
         return self.mlp(features).squeeze(-1)
+
+
+class ExplicitMLPEnsemble(nn.Module):
+    """Average rating predictions from independent MLP copies."""
+
+    def __init__(self, members: list[ExplicitRecommenderMLP]):
+        super().__init__()
+        if len(members) < 2:
+            raise ValueError("An ensemble requires at least two members")
+        self.members = nn.ModuleList(members)
+
+    def forward(self, users: torch.Tensor, items: torch.Tensor) -> torch.Tensor:
+        return torch.stack(
+            [member(users, items) for member in self.members],
+            dim=0,
+        ).mean(dim=0)

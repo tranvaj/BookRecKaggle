@@ -8,6 +8,7 @@ import pandas as pd
 import torch
 from torch.utils.data import DataLoader
 
+from bookrec.ensemble import default_seeds, resolve_seeds
 from bookrec.implicit.baselines import (
     ALSBaseline,
     MostPopularBaseline,
@@ -23,7 +24,6 @@ from bookrec.implicit.model import (
     create_implicit_model,
 )
 from bookrec.training import train_loop
-from scripts.implicit.train_ensemble import default_seeds, resolve_seeds
 
 
 class ImplicitTests(unittest.TestCase):

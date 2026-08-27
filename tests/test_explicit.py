@@ -11,13 +11,12 @@ from torch.utils.data import DataLoader
 from bookrec.explicit.baselines import (
     MeanBaselines,
     evaluate_mean_baselines,
-    fit_regularized_biases,
 )
 from bookrec.explicit.datasets import ExplicitDataset
 from bookrec.explicit.hyperparameters import load_hyperparameters
 from bookrec.explicit.metrics import mae, rmse
 from bookrec.explicit.model import (
-    ExplicitHybridRecommender,
+    ExplicitMLPEnsemble,
     ExplicitRecommenderMLP,
 )
 from bookrec.training import train_loop
@@ -73,34 +72,33 @@ class ExplicitTests(unittest.TestCase):
             {"global_mean", "user_mean", "item_mean"},
         )
 
-    def test_regularized_biases_and_hybrid_predictions(self):
-        global_mean, user_bias, item_bias = fit_regularized_biases(
-            self.encoded,
-            num_users=2,
-            num_items=2,
-            iterations=2,
-        )
-        mlp = ExplicitRecommenderMLP(
-            num_users=2,
-            num_items=2,
-            embedding_dim=2,
-            hidden_dims=(4,),
-            dropout=0.0,
-        )
-        model = ExplicitHybridRecommender(
-            global_mean,
-            user_bias,
-            item_bias,
-            mlp,
-        )
+    def test_ensemble_averages_member_rating_predictions(self):
+        members = [
+            ExplicitRecommenderMLP(
+                num_users=2,
+                num_items=2,
+                embedding_dim=2,
+                hidden_dims=(4,),
+                dropout=0.0,
+            )
+            for _ in range(3)
+        ]
+        ensemble = ExplicitMLPEnsemble(members)
+        users = torch.tensor([0, 1])
+        items = torch.tensor([0, 1])
 
-        predictions = model(
-            torch.tensor([0, 1]),
-            torch.tensor([0, 1]),
-        )
+        predictions = ensemble(users, items)
+        expected = torch.stack(
+            [member(users, items) for member in members]
+        ).mean(dim=0)
 
-        self.assertEqual(predictions.shape, (2,))
-        self.assertTrue(torch.all((predictions >= 1) & (predictions <= 10)))
+        self.assertTrue(torch.allclose(predictions, expected))
+
+    def test_ensemble_requires_at_least_two_members(self):
+        member = ExplicitRecommenderMLP(2, 2, embedding_dim=2)
+
+        with self.assertRaisesRegex(ValueError, "at least two members"):
+            ExplicitMLPEnsemble([member])
 
     def test_saved_hyperparameters_are_loaded(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -2,38 +2,32 @@ import argparse
 from pathlib import Path
 
 from bookrec.ensemble import DEFAULT_MEMBER_COUNT, resolve_seeds
-from bookrec.implicit.model import MODEL_REGISTRY
-from scripts.implicit.train import train_implicit_model
+from scripts.explicit.train import train_explicit_model
+
+
+DEFAULT_OUTPUT_DIRECTORY = Path("artifacts/explicit/mlp_ensemble")
 
 
 def train_ensemble(
-    model_name: str = "mlp",
     member_count: int = DEFAULT_MEMBER_COUNT,
     seeds: list[int] | None = None,
-    output_dir: Path | None = None,
+    output_dir: Path = DEFAULT_OUTPUT_DIRECTORY,
     hyperparameters_path: Path | None = None,
 ) -> list[Path]:
-    """Train independent copies of one architecture into seed directories."""
+    """Train explicit MLP copies into seed-specific subdirectories."""
     selected_seeds = resolve_seeds(member_count, seeds)
-    ensemble_directory = output_dir or Path(
-        f"artifacts/implicit/{model_name}_ensemble"
-    )
-    checkpoints = []
-    for seed in selected_seeds:
-        checkpoints.append(
-            train_implicit_model(
-                model_name=model_name,
-                seed=seed,
-                output_dir=ensemble_directory / f"seed_{seed}",
-                hyperparameters_path=hyperparameters_path,
-            )
+    return [
+        train_explicit_model(
+            seed=seed,
+            output_dir=output_dir / f"seed_{seed}",
+            hyperparameters_path=hyperparameters_path,
         )
-    return checkpoints
+        for seed in selected_seeds
+    ]
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", choices=MODEL_REGISTRY, default="mlp")
     parser.add_argument(
         "--num-members",
         "--num-ensembles",
@@ -50,6 +44,7 @@ def parse_args():
     parser.add_argument(
         "--output-dir",
         type=Path,
+        default=DEFAULT_OUTPUT_DIRECTORY,
         help="Parent directory for seed_<n> member directories.",
     )
     parser.add_argument("--hyperparameters-path", type=Path)
@@ -60,7 +55,6 @@ def main():
     args = parse_args()
     try:
         train_ensemble(
-            model_name=args.model,
             member_count=args.member_count,
             seeds=args.seeds,
             output_dir=args.output_dir,

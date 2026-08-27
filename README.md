@@ -41,6 +41,7 @@ scripts/
 └── explicit/
     ├── tune.py
     ├── train.py
+    ├── train_ensemble.py
     └── evaluate.py
 ```
 
@@ -117,28 +118,31 @@ MLP(user embedding, item embedding)
 ```
 
 The model is trained with MSE and evaluated against global-, user-, and item-mean
-baselines using RMSE and MAE. The strongest explicit model blends the MLP with
-alternating regularized user/item biases, using a validation-selected weight of
-0.85 for the bias estimate and 0.15 for the MLP.
+baselines using RMSE and MAE. The explicit ensemble averages rating predictions
+from independently trained copies of this same MLP architecture.
 
 Optuna runs 25 resumable trials and minimizes validation RMSE. The selected
 configuration is saved to `artifacts/explicit/mlp/best_hparams.json`; training
 uses the defaults when that file does not exist. The explicit MLP writes all of
-its artifacts beneath `artifacts/explicit/mlp/`.
+its artifacts beneath `artifacts/explicit/mlp/`; ensemble members are stored in
+`artifacts/explicit/mlp_ensemble/seed_<n>/`.
 
 ```bash
 .venv/bin/python -m scripts.explicit.tune
 .venv/bin/python -m scripts.explicit.train
-.venv/bin/python -m scripts.explicit.train_hybrid
-.venv/bin/python -m scripts.explicit.evaluate
+.venv/bin/python -m scripts.explicit.train_ensemble --num-members 3
+.venv/bin/python -m scripts.explicit.evaluate \
+  --ensemble-dir artifacts/explicit/mlp_ensemble
 ```
+
+As with the implicit ensemble, default seeds are `100, 110, 120, ...`; custom
+seeds can be supplied with `--seeds`.
 
 ## Verified results
 
-Ensemble-member selection and explicit blend weight selection used validation
-data only. With seed 42, the held-out test evaluation uses 1,000 candidates per
-user for implicit ranking and known user/item pairs for explicit rating
-prediction.
+Model selection used validation data only. With seed 42, the held-out test
+evaluation uses 1,000 candidates per user for implicit ranking and known
+user/item pairs for explicit rating prediction.
 
 | Implicit model | Recall@50 | NDCG@50 | Recall@100 |
 |---|---:|---:|---:|
@@ -149,7 +153,7 @@ prediction.
 | Explicit model | RMSE | MAE |
 |---|---:|---:|
 | MLP | 1.6070 | 1.2327 |
-| Hybrid | **1.5772** | **1.2095** |
+| MLP ensemble (3) | **1.5882** | **1.2228** |
 
 Both scripts build user and item mappings from training data. Validation/test
 interactions with cold-start IDs are excluded because ID-only collaborative

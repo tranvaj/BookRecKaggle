@@ -1,3 +1,4 @@
+import argparse
 import random
 from pathlib import Path
 
@@ -20,10 +21,12 @@ from bookrec.explicit.model import ExplicitRecommenderMLP
 from bookrec.training import train as train_model
 
 
-SEED = 42
+SPLIT_SEED = 42
+DEFAULT_TRAINING_SEED = 42
 EPOCHS = 100
 BATCH_SIZE = 1024
 MODEL_NAME = "mlp"
+ARTIFACT_ROOT = Path("artifacts/explicit")
 
 
 def set_seed(seed: int):
@@ -34,16 +37,36 @@ def set_seed(seed: int):
         torch.cuda.manual_seed_all(seed)
 
 
-def main():
-    set_seed(SEED)
-    artifact_directory = Path("artifacts/explicit") / MODEL_NAME
-    hyperparameters = load_hyperparameters(
-        artifact_directory / "best_hparams.json"
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--seed", type=int, default=DEFAULT_TRAINING_SEED)
+    parser.add_argument("--output-dir", type=Path)
+    parser.add_argument("--hyperparameters-path", type=Path)
+    return parser.parse_args()
+
+
+def train_explicit_model(
+    seed: int = DEFAULT_TRAINING_SEED,
+    output_dir: Path | None = None,
+    hyperparameters_path: Path | None = None,
+) -> Path:
+    """Train one explicit MLP and return its portable checkpoint path."""
+    set_seed(seed)
+    canonical_artifact_directory = ARTIFACT_ROOT / MODEL_NAME
+    artifact_directory = output_dir or canonical_artifact_directory
+    selected_hyperparameters_path = (
+        hyperparameters_path
+        or canonical_artifact_directory / "best_hparams.json"
     )
+    hyperparameters = load_hyperparameters(selected_hyperparameters_path)
     print(f"Training hyperparameters: {hyperparameters}")
+    print(f"Training seed: {seed}; output: {artifact_directory}")
     ratings = load_dataset()
     explicit_ratings = ratings[ratings[RATING_COLUMN] > 0].reset_index(drop=True)
-    train, validation, _ = split_interactions(explicit_ratings, seed=SEED)
+    train, validation, _ = split_interactions(
+        explicit_ratings,
+        seed=SPLIT_SEED,
+    )
 
     user_to_index, item_to_index = create_id_mappings(train)
     train_data = encode_interactions(train, user_to_index, item_to_index)
@@ -84,7 +107,7 @@ def main():
     )
 
     artifact_directory.mkdir(parents=True, exist_ok=True)
-    model, _, _, _ = train_model(
+    model, validation_scores, _, _ = train_model(
         model=model,
         train_dl=train_loader,
         val_dl=validation_loader,
@@ -101,16 +124,34 @@ def main():
         metric_mode="min",
     )
 
+    checkpoint_path = artifact_directory / "model_with_mappings.pt"
     torch.save(
         {
+            "model_type": MODEL_NAME,
             "model_state_dict": model.state_dict(),
             "user_to_index": user_to_index,
             "item_to_index": item_to_index,
             "hyperparameters": hyperparameters,
+            "validation_metrics": min(
+                validation_scores,
+                key=lambda scores: scores["rmse"],
+            ),
+            "split_seed": SPLIT_SEED,
+            "training_seed": seed,
         },
-        artifact_directory / "model_with_mappings.pt",
+        checkpoint_path,
     )
     print(f"Saved trained explicit model to {artifact_directory}")
+    return checkpoint_path
+
+
+def main():
+    args = parse_args()
+    train_explicit_model(
+        seed=args.seed,
+        output_dir=args.output_dir,
+        hyperparameters_path=args.hyperparameters_path,
+    )
 
 
 if __name__ == "__main__":
