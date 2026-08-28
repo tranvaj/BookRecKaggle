@@ -32,6 +32,8 @@ SEED = 42
 NUM_TRIALS = 25
 EPOCHS_PER_TRIAL = 12
 EVALUATION_CANDIDATES = 1_000
+HISTORY_CONTEXT_MODE = "mixed"
+HISTORY_SINGLETON_PROBABILITY = 0.5
 
 
 def set_seed(seed: int):
@@ -76,6 +78,10 @@ def main():
         num_items=len(item_to_index),
         negatives_per_positive=4,
         require_nonempty_history=args.model == "history_mlp",
+        history_mode=(
+            HISTORY_CONTEXT_MODE if args.model == "history_mlp" else "full"
+        ),
+        singleton_probability=HISTORY_SINGLETON_PROBABILITY,
     )
     validation_dataset = SampledRankingDataset(
         validation_data,
@@ -162,6 +168,11 @@ def main():
                     device,
                 )
                 validation_ndcg = scores["ndcg_at_50"]
+                print(
+                    f"Trial {trial.number + 1}, "
+                    f"epoch {epoch + 1}/{EPOCHS_PER_TRIAL}: "
+                    f"validation NDCG@50={validation_ndcg:.6f}"
+                )
                 best_ndcg = max(best_ndcg, validation_ndcg)
                 trial.report(validation_ndcg, step=epoch)
                 scheduler.step()
@@ -178,8 +189,11 @@ def main():
 
     artifact_directory = Path("artifacts/implicit") / args.model
     artifact_directory.mkdir(parents=True, exist_ok=True)
+    study_name = f"implicit_{args.model}"
+    if args.model == "history_mlp":
+        study_name += "_shared_interaction_v3"
     study = optuna.create_study(
-        study_name=f"implicit_{args.model}",
+        study_name=study_name,
         direction="maximize",
         storage=f"sqlite:///{artifact_directory / 'hpo.db'}",
         load_if_exists=True,

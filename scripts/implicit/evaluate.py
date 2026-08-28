@@ -16,6 +16,7 @@ from bookrec.implicit.datasets import (
 from bookrec.implicit.evaluation import evaluate_sampled_ranking
 from bookrec.implicit.hyperparameters import DEFAULT_HYPERPARAMETERS
 from bookrec.implicit.model import (
+    HISTORY_MLP_ARCHITECTURE_VERSION,
     MODEL_REGISTRY,
     ImplicitProbabilityDeepEnsemble,
     create_implicit_model,
@@ -76,6 +77,15 @@ def main():
         if checkpoint.get("model_type") != model_name:
             raise ValueError(
                 f"Checkpoint at {checkpoint_path} is not a {model_name} model"
+            )
+        if (
+            model_name == "history_mlp"
+            and checkpoint.get("architecture_version")
+            != HISTORY_MLP_ARCHITECTURE_VERSION
+        ):
+            raise ValueError(
+                f"Checkpoint at {checkpoint_path} uses the obsolete "
+                "history_mlp architecture. Retrain it."
             )
         checkpoints[model_name] = checkpoint
 
@@ -227,6 +237,14 @@ def main():
             or checkpoint["hyperparameters"] != ensemble_hyperparameters
         ):
             raise ValueError(f"Incompatible ensemble member: {path}")
+        if (
+            ensemble_model_type == "history_mlp"
+            and checkpoint.get("architecture_version")
+            != HISTORY_MLP_ARCHITECTURE_VERSION
+        ):
+            raise ValueError(
+                f"Obsolete history_mlp ensemble member: {path}. Retrain it."
+            )
         member = create_implicit_model(
             ensemble_model_type,
             num_users=len(user_to_index),

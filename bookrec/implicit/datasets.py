@@ -42,7 +42,15 @@ class ImplicitDataset(Dataset):
         num_items: int,
         negatives_per_positive: int = 4,
         require_nonempty_history: bool = False,
+        history_mode: str = "full",
+        singleton_probability: float = 0.5,
     ):
+        if history_mode not in {"full", "singleton", "mixed"}:
+            raise ValueError(
+                "history_mode must be 'full', 'singleton', or 'mixed'"
+            )
+        if not 0.0 <= singleton_probability <= 1.0:
+            raise ValueError("singleton_probability must be between 0 and 1")
         positive_pairs = (
             train_interactions[["user", "item"]]
             .drop_duplicates()
@@ -69,6 +77,8 @@ class ImplicitDataset(Dataset):
         )
         self.num_items = num_items
         self.negatives_per_positive = negatives_per_positive
+        self.history_mode = history_mode
+        self.singleton_probability = singleton_probability
 
     def __len__(self):
         return len(self.positive_pairs)
@@ -77,6 +87,13 @@ class ImplicitDataset(Dataset):
         user, positive_item = map(int, self.positive_pairs[index])
         seen = self.seen_items[user]
         history = sorted(self.history_by_user[user] - {positive_item})
+        use_singleton = self.history_mode == "singleton" or (
+            self.history_mode == "mixed"
+            and torch.rand(()).item() < self.singleton_probability
+        )
+        if use_singleton and history:
+            selected_index = torch.randint(len(history), size=(1,)).item()
+            history = [history[selected_index]]
 
         if self.num_items - len(seen) < self.negatives_per_positive:
             raise ValueError(

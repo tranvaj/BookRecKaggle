@@ -79,6 +79,28 @@ class ImplicitTests(unittest.TestCase):
             all(len(dataset[index]["history_items"]) for index in range(2))
         )
 
+    def test_mixed_history_training_samples_singleton_and_full_contexts(self):
+        interactions = pd.DataFrame(
+            {"user": [0, 0, 0, 0], "item": [0, 1, 2, 3]}
+        )
+        dataset = ImplicitDataset(
+            interactions,
+            interactions,
+            num_items=10,
+            negatives_per_positive=1,
+            require_nonempty_history=True,
+            history_mode="mixed",
+            singleton_probability=0.5,
+        )
+        torch.manual_seed(7)
+
+        history_lengths = {
+            len(dataset[0]["history_items"])
+            for _ in range(100)
+        }
+
+        self.assertEqual(history_lengths, {1, 3})
+
     def test_ranking_dataset_contains_all_held_out_positives_per_user(self):
         held_out = pd.DataFrame(
             {"user": [0, 0, 1], "item": [1, 2, 3]}
@@ -237,11 +259,11 @@ class ImplicitTests(unittest.TestCase):
             ]
         )
 
-        sparse_projection = model.history_encoder(
+        sparse_projection = model.item_embedding(
             history_items,
             history_offset,
         )
-        dense_projection = dense_histories @ model.history_encoder.weight
+        dense_projection = dense_histories @ model.item_embedding.weight
 
         self.assertTrue(torch.allclose(sparse_projection, dense_projection))
 
@@ -253,12 +275,11 @@ class ImplicitTests(unittest.TestCase):
             dropout=0.0,
         )
         with torch.no_grad():
-            model.history_encoder.weight.zero_()
-            model.history_encoder.weight[0] = torch.tensor([1.0, 0.0])
-            model.history_encoder.weight[1] = torch.tensor([2.0, 0.0])
             model.item_embedding.weight.zero_()
-            model.item_embedding.weight[2] = torch.tensor([0.0, 1.0])
-            model.item_embedding.weight[3] = torch.tensor([0.0, 2.0])
+            model.item_embedding.weight[0] = torch.tensor([1.0, 0.0])
+            model.item_embedding.weight[1] = torch.tensor([0.0, 1.0])
+            model.item_embedding.weight[2] = torch.tensor([1.0, 0.0])
+            model.item_embedding.weight[3] = torch.tensor([0.0, 1.0])
             model.mlp[0].weight.fill_(1.0)
             model.mlp[0].bias.zero_()
 
@@ -276,10 +297,13 @@ class ImplicitTests(unittest.TestCase):
         self.assertTrue(torch.equal(scores, other_user_scores))
         self.assertNotEqual(scores[0, 0].item(), scores[1, 0].item())
         self.assertNotEqual(scores[0, 0].item(), scores[0, 1].item())
-        self.assertNotEqual(
-            model.history_encoder.weight.data_ptr(),
-            model.item_embedding.weight.data_ptr(),
-        )
+        self.assertEqual(model.mlp[0].in_features, 2)
+        item_embedding_parameters = [
+            name
+            for name, _ in model.named_parameters()
+            if name.endswith("item_embedding.weight")
+        ]
+        self.assertEqual(item_embedding_parameters, ["item_embedding.weight"])
 
     def test_most_popular_uses_training_interaction_counts(self):
         baseline = MostPopularBaseline.fit(

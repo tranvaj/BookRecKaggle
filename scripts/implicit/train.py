@@ -21,7 +21,11 @@ from bookrec.implicit.datasets import (
 )
 from bookrec.implicit.evaluation import RANKING_METRICS
 from bookrec.implicit.hyperparameters import load_hyperparameters
-from bookrec.implicit.model import MODEL_REGISTRY, create_implicit_model
+from bookrec.implicit.model import (
+    HISTORY_MLP_ARCHITECTURE_VERSION,
+    MODEL_REGISTRY,
+    create_implicit_model,
+)
 from bookrec.training import train as train_model
 
 
@@ -32,6 +36,8 @@ EVALUATION_CANDIDATES = 1_000
 EPOCHS = 100
 BATCH_SIZE = 512
 NEGATIVES_PER_POSITIVE = 8
+HISTORY_CONTEXT_MODE = "mixed"
+HISTORY_SINGLETON_PROBABILITY = 0.5
 
 
 def set_seed(seed: int):
@@ -103,6 +109,10 @@ def train_implicit_model(
 
     user_to_index, item_to_index = create_id_mappings(train)
     train_data = encode_interactions(train, user_to_index, item_to_index)
+    training_item_counts = torch.bincount(
+        torch.tensor(train_data["item"].to_numpy(), dtype=torch.long),
+        minlength=len(item_to_index),
+    )
     validation_data = encode_interactions(
         validation,
         user_to_index,
@@ -119,6 +129,10 @@ def train_implicit_model(
         num_items=len(item_to_index),
         negatives_per_positive=NEGATIVES_PER_POSITIVE,
         require_nonempty_history=model_name == "history_mlp",
+        history_mode=(
+            HISTORY_CONTEXT_MODE if model_name == "history_mlp" else "full"
+        ),
+        singleton_probability=HISTORY_SINGLETON_PROBABILITY,
     )
     validation_dataset = SampledRankingDataset(
         validation_data,
@@ -182,9 +196,15 @@ def train_implicit_model(
     torch.save(
         {
             "model_type": model_name,
+            "architecture_version": (
+                HISTORY_MLP_ARCHITECTURE_VERSION
+                if model_name == "history_mlp"
+                else 1
+            ),
             "model_state_dict": model.state_dict(),
             "user_to_index": user_to_index,
             "item_to_index": item_to_index,
+            "training_item_counts": training_item_counts,
             "hyperparameters": hyperparameters,
             "validation_metrics": max(
                 validation_scores,
@@ -192,6 +212,14 @@ def train_implicit_model(
             ),
             "split_seed": SPLIT_SEED,
             "training_seed": seed,
+            "history_training": (
+                {
+                    "context_mode": HISTORY_CONTEXT_MODE,
+                    "singleton_probability": HISTORY_SINGLETON_PROBABILITY,
+                }
+                if model_name == "history_mlp"
+                else None
+            ),
         },
         checkpoint_path,
     )

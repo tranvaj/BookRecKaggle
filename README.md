@@ -50,27 +50,42 @@ scripts/
 
 This is the direct solution to “I like *The Lord of the Rings*, what else
 should I read?” The `history_mlp` model does not have a user-ID embedding.
-Instead, it projects the books in the supplied interaction history, combines
-that representation with each candidate-book embedding, and scores the pair
-with the same MLP structure used by the ID-based model:
+Instead, it projects the books in the supplied interaction history and scores
+their learned interaction with each candidate-book embedding:
 
 ```text
-history = sum(history_embedding[known_book] for known_book in known_books)
-score = MLP(concat(history, candidate_embedding[candidate_book]))
+history = normalize(sum(item_embedding[known_book] for known_book in known_books))
+candidate = normalize(item_embedding[candidate_book])
+score = MLP(history * candidate)
 ```
 
 Histories are conceptually binary vectors over all books. They are passed as
 only their nonzero item IDs and summed with `EmbeddingBag`, which is exactly a
 bias-free linear projection of the dense binary vector without allocating it.
-The history and candidate embeddings are separate learned matrices.
+History books and candidates use the same learned item-embedding matrix, making
+singleton training a symmetric item-to-item learning problem. Only their
+elementwise interaction enters the MLP, preventing a candidate-only popularity
+shortcut.
 
-For every training positive, its context is the user's complete training
-history with that target removed. Evaluation reports two views over identical
-candidates: full history is the primary personalization result, while singleton
-context is the secondary one-book-query diagnostic. Validation contexts contain
-training interactions; test contexts contain training plus validation
-interactions. Held-out targets never enter the context, and the input book is
-not a candidate negative.
+For every training positive, the target is removed from its history. Half of
+training examples use that complete remaining history and half randomly select
+one of its books, with the singleton resampled dynamically. Unobserved candidates
+are sampled uniformly. Evaluation reports full history as the primary
+personalization result and singleton context as the secondary one-book-query
+diagnostic. Validation contexts contain training interactions; test contexts
+contain training plus validation interactions. Held-out targets never enter the
+context, and the input book is not a candidate negative.
+
+This interaction-based scorer is architecture version 3. Version-1 checkpoints
+used concatenated history and candidate features and could collapse to an almost
+candidate-only popularity ranking; version 2 still used separate history and
+candidate embeddings. Older checkpoints are rejected and must be retrained.
+History-model tuning uses a new Optuna study inside the existing
+`hpo.db`, so old trials are retained but not reused for the new architecture.
+Portable checkpoints also store training-only item support counts. The demo
+excludes candidates with fewer than five training interactions and warns when
+the input edition has fewer than twenty; an interaction-only model cannot make
+a reliable claim for a nearly unseen ISBN.
 
 ```bash
 .venv/bin/python -m scripts.implicit.tune --model history_mlp

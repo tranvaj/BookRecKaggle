@@ -1,5 +1,9 @@
 import torch
 from torch import nn
+from torch.nn import functional as F
+
+
+HISTORY_MLP_ARCHITECTURE_VERSION = 3
 
 
 class ImplicitRecommenderNeuMF(nn.Module):
@@ -111,7 +115,7 @@ class ImplicitRecommenderMLP(nn.Module):
 
 
 class ImplicitHistoryMLP(nn.Module):
-    """Score candidates from a sparse binary item-history projection."""
+    """Score candidates through normalized, shared item interactions."""
 
     def __init__(
         self,
@@ -124,16 +128,15 @@ class ImplicitHistoryMLP(nn.Module):
         if num_items < 1:
             raise ValueError("num_items must be positive")
 
-        self.history_encoder = nn.EmbeddingBag(
+        self.item_embedding = nn.EmbeddingBag(
             num_items,
             embedding_dim,
             mode="sum",
             include_last_offset=False,
         )
-        self.item_embedding = nn.Embedding(num_items, embedding_dim)
 
         layers: list[nn.Module] = []
-        input_dim = embedding_dim * 2
+        input_dim = embedding_dim
         for hidden_dim in hidden_dims:
             layers.extend(
                 (nn.Linear(input_dim, hidden_dim), nn.ReLU(), nn.Dropout(dropout))
@@ -142,7 +145,6 @@ class ImplicitHistoryMLP(nn.Module):
         layers.append(nn.Linear(input_dim, 1))
         self.mlp = nn.Sequential(*layers)
 
-        nn.init.normal_(self.history_encoder.weight, std=0.05)
         nn.init.normal_(self.item_embedding.weight, std=0.05)
 
     def forward(
@@ -154,16 +156,19 @@ class ImplicitHistoryMLP(nn.Module):
         **_: torch.Tensor,
     ) -> torch.Tensor:
         del users
-        history_features = self.history_encoder(
-            history_items,
-            history_offset,
+        history_features = F.normalize(
+            self.item_embedding(history_items, history_offset),
+            dim=-1,
         )
         if history_features.shape[0] != items.shape[0]:
             raise ValueError(
                 "Expected one history offset for each grouped candidate sample"
             )
 
-        candidate_features = self.item_embedding(items)
+        candidate_features = F.normalize(
+            F.embedding(items, self.item_embedding.weight),
+            dim=-1,
+        )
         if items.ndim == 1:
             expanded_history = history_features
         else:
@@ -172,7 +177,7 @@ class ImplicitHistoryMLP(nn.Module):
                 expanded_history = expanded_history.unsqueeze(1)
             expanded_history = expanded_history.expand(*items.shape, -1)
 
-        features = torch.cat((expanded_history, candidate_features), dim=-1)
+        features = expanded_history * candidate_features
         return self.mlp(features).squeeze(-1)
 
 
