@@ -96,6 +96,27 @@ a reliable claim for a nearly unseen ISBN.
   --ensemble-dir artifacts/implicit/history_mlp_ensemble
 ```
 
+Single checkpoints and history ensembles use the same inference interface:
+
+```python
+from bookrec.implicit.inference import (
+    load_history_mlp,
+    predict_history_probabilities,
+)
+
+loaded = load_history_mlp(
+    "artifacts/implicit/history_mlp_ensemble"
+)
+history = [loaded.item_to_index["0618260250"]]
+probabilities = predict_history_probabilities(
+    loaded.model,
+    history_items=history,
+)  # one probability per encoded catalog item
+```
+
+Pass `artifacts/implicit/history_mlp` instead to load the single model. Remove
+the history items from the candidate ranking before returning recommendations.
+
 This iteration evaluates encoded interaction data only. It deliberately does
 not add title/ISBN resolution or a title-based serving CLI.
 

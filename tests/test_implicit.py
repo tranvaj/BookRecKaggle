@@ -20,8 +20,13 @@ from bookrec.implicit.datasets import (
     collate_implicit_batch,
 )
 from bookrec.implicit.hyperparameters import load_hyperparameters
+from bookrec.implicit.inference import (
+    load_history_mlp,
+    predict_history_probabilities,
+)
 from bookrec.implicit.metrics import mean_reciprocal_rank, ndcg_at_k, recall_at_k
 from bookrec.implicit.model import (
+    HISTORY_MLP_ARCHITECTURE_VERSION,
     MODEL_REGISTRY,
     ImplicitHistoryMLP,
     ImplicitProbabilityDeepEnsemble,
@@ -415,6 +420,110 @@ class ImplicitTests(unittest.TestCase):
         ).mean(dim=0)
 
         self.assertTrue(torch.allclose(scores, expected))
+
+    def test_history_inference_loads_and_scores_single_model(self):
+        hyperparameters = {
+            "embedding_dim": 2,
+            "hidden_dims": (),
+            "dropout": 0.0,
+        }
+        model = ImplicitHistoryMLP(
+            num_items=3,
+            embedding_dim=2,
+            hidden_dims=(),
+            dropout=0.0,
+        )
+        with torch.no_grad():
+            model.item_embedding.weight.copy_(
+                torch.tensor([[1.0, 0.0], [1.0, 0.0], [0.0, 1.0]])
+            )
+            model.mlp[0].weight.copy_(torch.tensor([[1.0, 0.0]]))
+            model.mlp[0].bias.zero_()
+
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint_path = Path(directory) / "model_with_mappings.pt"
+            torch.save(
+                {
+                    "model_type": "history_mlp",
+                    "architecture_version": HISTORY_MLP_ARCHITECTURE_VERSION,
+                    "model_state_dict": model.state_dict(),
+                    "user_to_index": {"user": 0},
+                    "item_to_index": {"a": 0, "b": 1, "c": 2},
+                    "training_item_counts": torch.tensor([3, 2, 1]),
+                    "hyperparameters": hyperparameters,
+                },
+                checkpoint_path,
+            )
+
+            loaded = load_history_mlp(Path(directory), device="cpu")
+            probabilities = predict_history_probabilities(
+                loaded.model,
+                history_items=[0, 0],
+                candidate_items=[1, 2],
+                batch_size=1,
+            )
+
+        expected = torch.sigmoid(torch.tensor([1.0, 0.0]))
+        self.assertFalse(loaded.is_ensemble)
+        self.assertEqual(loaded.index_to_item, ("a", "b", "c"))
+        self.assertTrue(torch.allclose(probabilities, expected))
+
+    def test_history_inference_loads_ensemble_and_averages_probabilities(self):
+        hyperparameters = {
+            "embedding_dim": 2,
+            "hidden_dims": (),
+            "dropout": 0.0,
+        }
+        item_to_index = {"a": 0, "b": 1, "c": 2}
+
+        with tempfile.TemporaryDirectory() as directory:
+            ensemble_directory = Path(directory)
+            for seed, bias in ((100, 0.0), (110, 2.0)):
+                model = ImplicitHistoryMLP(
+                    num_items=3,
+                    embedding_dim=2,
+                    hidden_dims=(),
+                    dropout=0.0,
+                )
+                with torch.no_grad():
+                    model.mlp[0].weight.zero_()
+                    model.mlp[0].bias.fill_(bias)
+                member_directory = ensemble_directory / f"seed_{seed}"
+                member_directory.mkdir()
+                torch.save(
+                    {
+                        "model_type": "history_mlp",
+                        "architecture_version": (
+                            HISTORY_MLP_ARCHITECTURE_VERSION
+                        ),
+                        "model_state_dict": model.state_dict(),
+                        "user_to_index": {"user": 0},
+                        "item_to_index": item_to_index,
+                        "training_item_counts": torch.tensor([3, 2, 1]),
+                        "hyperparameters": hyperparameters,
+                    },
+                    member_directory / "model_with_mappings.pt",
+                )
+
+            loaded = load_history_mlp(ensemble_directory, device="cpu")
+            probabilities = predict_history_probabilities(
+                loaded.model,
+                history_items=[0],
+                candidate_items=[1, 2],
+            )
+
+        expected_probability = (
+            torch.sigmoid(torch.tensor(0.0))
+            + torch.sigmoid(torch.tensor(2.0))
+        ) / 2
+        self.assertTrue(loaded.is_ensemble)
+        self.assertEqual(len(loaded.member_paths), 2)
+        self.assertTrue(
+            torch.allclose(
+                probabilities,
+                expected_probability.repeat(2),
+            )
+        )
 
     def test_ensemble_seed_defaults_and_validation(self):
         self.assertEqual(default_seeds(4), [100, 110, 120, 130])
