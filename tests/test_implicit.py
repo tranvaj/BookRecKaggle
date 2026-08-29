@@ -19,7 +19,11 @@ from bookrec.implicit.datasets import (
     SampledRankingDataset,
     collate_implicit_batch,
 )
-from bookrec.implicit.hyperparameters import load_hyperparameters
+from bookrec.implicit.hyperparameters import (
+    DEFAULT_ALS_HYPERPARAMETERS,
+    load_als_hyperparameters,
+    load_hyperparameters,
+)
 from bookrec.implicit.inference import (
     load_history_mlp,
     predict_history_probabilities,
@@ -64,6 +68,24 @@ class ImplicitTests(unittest.TestCase):
         self.assertTrue(set(negative_items).isdisjoint({0, 1, 2}))
         self.assertTrue(
             set(negative_items).isdisjoint(sample["history_items"].tolist())
+        )
+
+    def test_als_hyperparameters_use_defaults_and_saved_overrides(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "best_hparams.json"
+            self.assertEqual(
+                load_als_hyperparameters(path),
+                DEFAULT_ALS_HYPERPARAMETERS,
+            )
+
+            path.write_text(json.dumps({"factors": 64, "alpha": 25.0}))
+            loaded = load_als_hyperparameters(path)
+
+        self.assertEqual(loaded["factors"], 64)
+        self.assertEqual(loaded["alpha"], 25.0)
+        self.assertEqual(
+            loaded["regularization"],
+            DEFAULT_ALS_HYPERPARAMETERS["regularization"],
         )
 
     def test_history_training_excludes_empty_context_examples(self):

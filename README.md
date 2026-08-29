@@ -37,6 +37,7 @@ scripts/
 │   ├── tune.py              # Tune neural models with Optuna
 │   ├── train.py             # Train a model or deep-ensemble member
 │   ├── train_ensemble.py    # Train multiple independent members
+│   ├── tune_als.py          # Tune ALS with Optuna
 │   ├── train_als.py         # Train the ALS baseline
 │   └── evaluate.py          # Compare models on the test set
 └── explicit/
@@ -142,6 +143,10 @@ Optuna runs a separate resumable study for each neural model and maximizes
 validation NDCG@50. Each model keeps its hyperparameters and checkpoints in its
 own artifact directory:
 
+ALS has its own resumable Optuna study using the identical validation rankings.
+It tunes the factor count, confidence scaling, regularization, and iteration
+count, then `train_als` automatically loads the selected parameters.
+
 ```text
 artifacts/implicit/
 ├── mlp/
@@ -160,6 +165,8 @@ artifacts/implicit/
 │   ├── best_model.pt
 │   └── model_with_mappings.pt
 ├── als/
+│   ├── hpo.db
+│   ├── best_hparams.json
 │   └── model.pt
 ├── mlp_ensemble/
 │   ├── seed_100/model_with_mappings.pt
@@ -179,9 +186,11 @@ each independent member in a `seed_<n>` directory:
 .venv/bin/python -m scripts.implicit.tune --model mlp
 .venv/bin/python -m scripts.implicit.tune --model neumf
 .venv/bin/python -m scripts.implicit.tune --model history_mlp
+.venv/bin/python -m scripts.implicit.tune_als --num-trials 25
 .venv/bin/python -m scripts.implicit.train --model mlp
 .venv/bin/python -m scripts.implicit.train --model neumf
 .venv/bin/python -m scripts.implicit.train --model history_mlp
+.venv/bin/python -m scripts.implicit.train_als
 .venv/bin/python -m scripts.implicit.train_ensemble --num-members 3
 .venv/bin/python -m scripts.implicit.evaluate \
   --ensemble-dir artifacts/implicit/mlp_ensemble

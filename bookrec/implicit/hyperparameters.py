@@ -16,10 +16,25 @@ DEFAULT_HYPERPARAMETERS = {
     "weight_decay": 1e-5,
 }
 
+DEFAULT_ALS_HYPERPARAMETERS = {
+    "factors": 32,
+    "regularization": 0.05,
+    "alpha": 10.0,
+    "iterations": 20,
+}
+
 
 def load_hyperparameters(path: Path) -> dict:
     hyperparameters = DEFAULT_HYPERPARAMETERS.copy()
     if path.exists():
         hyperparameters.update(json.loads(path.read_text()))
     hyperparameters["hidden_dims"] = tuple(hyperparameters["hidden_dims"])
+    return hyperparameters
+
+
+def load_als_hyperparameters(path: Path) -> dict:
+    """Load tuned ALS parameters, falling back to the existing defaults."""
+    hyperparameters = DEFAULT_ALS_HYPERPARAMETERS.copy()
+    if path.exists():
+        hyperparameters.update(json.loads(path.read_text()))
     return hyperparameters
