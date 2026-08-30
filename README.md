@@ -17,11 +17,14 @@ regression while allowing data loading and training mechanics to be shared.
 ```text
 bookrec/
 ├── data.py                   # Loading, splitting, and ID encoding
+├── catalog.py                # ISBN metadata, title search, and resolution
 ├── training.py               # Shared training and evaluation loops
 ├── implicit/
 │   ├── datasets.py          # Negative sampling and sparse-history batching
 │   ├── baselines.py         # Random, popularity, and implicit ALS
 │   ├── model.py             # ID models, history MLP, and ensembles
+│   ├── inference.py         # Checkpoint loading and low-level scoring
+│   ├── recommender.py       # Serving interface for ISBN/title queries
 │   ├── metrics.py           # Ranking metrics
 │   └── evaluation.py
 └── explicit/
@@ -97,7 +100,8 @@ a reliable claim for a nearly unseen ISBN.
   --ensemble-dir artifacts/implicit/history_mlp_ensemble
 ```
 
-Single checkpoints and history ensembles use the same inference interface:
+Single checkpoints and history ensembles use the same low-level inference
+interface:
 
 ```python
 from bookrec.implicit.inference import (
@@ -118,8 +122,30 @@ probabilities = predict_history_probabilities(
 Pass `artifacts/implicit/history_mlp` instead to load the single model. Remove
 the history items from the candidate ranking before returning recommendations.
 
-This iteration evaluates encoded interaction data only. It deliberately does
-not add title/ISBN resolution or a title-based serving CLI.
+For application code, `HistoryMLPRecommender` loads the models, mappings,
+metadata, and eligible candidates once. It accepts one ISBN or a list of ISBNs;
+the same class works for a single checkpoint and an ensemble:
+
+```python
+from bookrec.implicit import HistoryMLPRecommender
+from bookrec.data import load_dataset
+
+recommender = HistoryMLPRecommender(
+    "artifacts/implicit/history_mlp_ensemble",
+    books=load_dataset("Books.csv"),
+    min_candidate_interactions=5,
+)
+recommendations = recommender.recommend_by_isbn(
+    ["0618260250"],
+    top_k=10,
+)
+```
+
+`recommend_by_title()` uses the catalog's exact-title-then-prefix edition
+resolution and its configurable `min_query_interactions` threshold.
+`search_titles()` has a separate `min_training_interactions` argument for a
+future API autocomplete endpoint. Scores are ensemble ranking scores learned
+with sampled BCE and should not be presented as calibrated probabilities.
 
 ## Implicit model
 

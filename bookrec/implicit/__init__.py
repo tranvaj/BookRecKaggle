@@ -12,11 +12,13 @@ from bookrec.implicit.model import (
     ImplicitRecommenderNeuMF,
     create_implicit_model,
 )
+from bookrec.implicit.recommender import HistoryMLPRecommender
 
 __all__ = [
     "ImplicitHistoryMLP",
     "ImplicitRecommenderMLP",
     "ImplicitRecommenderNeuMF",
+    "HistoryMLPRecommender",
     "LoadedHistoryMLP",
     "MODEL_REGISTRY",
     "create_implicit_model",
