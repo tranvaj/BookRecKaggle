@@ -245,6 +245,15 @@ class BookCatalog:
             raise KeyError(f"ISBN has no model-supported metadata: {isbn}")
         return record
 
+    def get_books(self, isbns: Sequence[object]) -> list[CatalogBook]:
+        """Return metadata for ISBNs in the same order they were supplied."""
+        if isinstance(isbns, (str, bytes)):
+            raise TypeError("isbns must be a sequence, not a single string")
+        requested_isbns = list(isbns)
+        if not requested_isbns:
+            raise ValueError("isbns must contain at least one ISBN")
+        return [self.get_by_isbn(isbn) for isbn in requested_isbns]
+
     def get_by_item_index(self, item_index: int) -> CatalogBook:
         """Return display metadata for an encoded model item."""
         record = self._records_by_item_index.get(item_index)
@@ -305,35 +314,24 @@ class BookCatalog:
             f"No supported edition found for title: {title!r}"
         )
 
-    def search_titles(
+    def resolve_titles(
         self,
-        query: str,
-        limit: int = 10,
-        min_training_interactions: int = 1,
-    ) -> list[CatalogBook]:
-        """Search learned book titles for an autocomplete-style endpoint."""
-        normalized_query = _normalize_title(query)
-        if not normalized_query:
-            raise ValueError("query must not be empty")
-        if limit < 1:
-            raise ValueError("limit must be positive")
-        self._validate_minimum_support(min_training_interactions)
-
-        matches = [
-            (record, record_title)
-            for record, record_title in self._records_with_titles
-            if record.training_interactions >= min_training_interactions
-            and normalized_query in record_title
+        titles: Sequence[str],
+        min_training_interactions: int = 20,
+    ) -> list[str]:
+        """Resolve titles to ISBNs in the same order they were supplied."""
+        if isinstance(titles, (str, bytes)):
+            raise TypeError("titles must be a sequence, not a single string")
+        requested_titles = list(titles)
+        if not requested_titles:
+            raise ValueError("titles must contain at least one title")
+        return [
+            self.resolve_title(
+                title,
+                min_training_interactions=min_training_interactions,
+            ).isbn
+            for title in requested_titles
         ]
-        matches.sort(
-            key=lambda match: (
-                match[1] != normalized_query,
-                not match[1].startswith(normalized_query),
-                -match[0].training_interactions,
-                match[0].item_index,
-            )
-        )
-        return [record for record, _ in matches[:limit]]
 
     def _validate_minimum_support(self, minimum: int) -> None:
         if minimum < 0:

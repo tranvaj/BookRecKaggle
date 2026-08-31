@@ -17,7 +17,7 @@ from bookrec.implicit.inference import (
 
 
 class HistoryMLPRecommender:
-    """Load a history MLP once and serve ISBN- or title-based rankings.
+    """Load a history MLP once and serve ISBN-based rankings.
 
     All long-lived state is created in ``__init__``: model members, mappings,
     metadata, and the eligible candidate-index tensor. Query histories and
@@ -32,13 +32,10 @@ class HistoryMLPRecommender:
         *,
         device: str | torch.device | None = None,
         min_candidate_interactions: int = 5,
-        min_query_interactions: int = 20,
         inference_batch_size: int = 8_192,
     ) -> None:
         if inference_batch_size < 1:
             raise ValueError("inference_batch_size must be positive")
-        if min_query_interactions < 0:
-            raise ValueError("min_query_interactions must be non-negative")
 
         loaded = load_history_mlp(artifact_path, device=device)
         catalog = self._create_catalog(books, loaded)
@@ -59,7 +56,6 @@ class HistoryMLPRecommender:
         self.loaded = loaded
         self.catalog = catalog
         self._candidate_indices = candidate_indices
-        self.min_query_interactions = min_query_interactions
         self.inference_batch_size = inference_batch_size
 
     @property
@@ -122,50 +118,15 @@ class HistoryMLPRecommender:
         for rank, position in enumerate(top_positions.tolist(), start=1):
             item_index = int(candidates[position])
             record = self.catalog.get_by_item_index(item_index)
-            recommendation = record.to_dict()
-            recommendation["rank"] = rank
-            recommendation["score"] = float(scores[position])
-            recommendations.append(recommendation)
-        return recommendations
-
-    def recommend_by_title(
-        self,
-        history_titles: str | Sequence[str],
-        top_k: int = 10,
-    ) -> list[dict[str, object]]:
-        """Resolve one or more supported titles, then recommend by ISBN."""
-        if isinstance(history_titles, str):
-            requested_titles = [history_titles]
-        else:
-            requested_titles = list(history_titles)
-        if not requested_titles:
-            raise ValueError("history_titles must contain at least one title")
-
-        resolved = [
-            self.catalog.resolve_title(
-                title,
-                min_training_interactions=self.min_query_interactions,
+            recommendations.append(
+                {
+                    "isbn": record.isbn,
+                    "title": record.title,
+                    "rank": rank,
+                    "score": float(scores[position]),
+                }
             )
-            for title in requested_titles
-        ]
-        return self.recommend_by_isbn(
-            [record.isbn for record in resolved],
-            top_k=top_k,
-        )
-
-    def search_titles(
-        self,
-        query: str,
-        limit: int = 10,
-        min_training_interactions: int = 1,
-    ) -> list[dict[str, object]]:
-        """Return supported catalog matches suitable for an API search box."""
-        records = self.catalog.search_titles(
-            query,
-            limit=limit,
-            min_training_interactions=min_training_interactions,
-        )
-        return [record.to_dict() for record in records]
+        return recommendations
 
     @staticmethod
     def _create_catalog(

@@ -90,13 +90,24 @@ class BookCatalogTests(unittest.TestCase):
         self.assertEqual(self.catalog.model_item_count, 4)
         self.assertEqual(self.catalog.metadata_item_count, 4)
 
-    def test_search_prioritizes_exact_title_then_support(self):
-        results = self.catalog.search_titles(
-            "Example Book",
+    def test_batch_resolution_and_metadata_preserve_input_order(self):
+        resolved_isbns = self.catalog.resolve_titles(
+            ["Another Book", "Example Book"],
             min_training_interactions=1,
         )
+        books = self.catalog.get_books(
+            [resolved_isbns[1], resolved_isbns[0], resolved_isbns[1]]
+        )
 
-        self.assertEqual([result.item_index for result in results], [1, 0, 2])
+        self.assertEqual(resolved_isbns, ["0000000004", "0000000002"])
+        self.assertEqual(
+            [book.isbn for book in books],
+            ["0000000002", "0000000004", "0000000002"],
+        )
+        self.assertEqual(
+            [book.training_interactions for book in books],
+            [12, 8, 12],
+        )
 
 
 class HistoryMLPRecommenderTests(unittest.TestCase):
@@ -193,13 +204,17 @@ class HistoryMLPRecommenderTests(unittest.TestCase):
             [recommendation["rank"] for recommendation in recommendations],
             [1, 2, 3],
         )
-        self.assertNotIn("item_index", recommendations[0])
+        self.assertEqual(
+            set(recommendations[0]),
+            {"isbn", "title", "rank", "score"},
+        )
+        self.assertEqual(recommendations[0]["title"], "Best Match")
         self.assertGreater(recommendations[0]["score"], recommendations[1]["score"])
         self.assertFalse(recommender.is_ensemble)
         self.assertEqual(recommender.member_count, 1)
         self.assertEqual(recommender.candidate_count, 5)
 
-    def test_recommender_validates_queries_and_searches_titles(self):
+    def test_recommender_validates_isbn_queries(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             artifact_directory = Path(temporary_directory)
             self._save_checkpoint(artifact_directory)
@@ -208,25 +223,12 @@ class HistoryMLPRecommenderTests(unittest.TestCase):
                 self._books(),
                 device="cpu",
                 min_candidate_interactions=5,
-                min_query_interactions=10,
-            )
-
-            search_results = recommender.search_titles("match")
-            title_recommendations = recommender.recommend_by_title(
-                "Query",
-                top_k=1,
             )
 
             with self.assertRaisesRegex(KeyError, "not supported"):
                 recommender.recommend_by_isbn("9999999999")
             with self.assertRaisesRegex(ValueError, "at least one"):
                 recommender.recommend_by_isbn([])
-
-        self.assertEqual(
-            [result["title"] for result in search_results],
-            ["Best Match", "Partial Match", "Rare Match"],
-        )
-        self.assertEqual(title_recommendations[0]["isbn"], "0000000002")
 
     def test_recommender_loads_an_ensemble_once(self):
         with tempfile.TemporaryDirectory() as temporary_directory:

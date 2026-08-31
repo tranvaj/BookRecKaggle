@@ -15,16 +15,20 @@ regression while allowing data loading and training mechanics to be shared.
 ## Structure
 
 ```text
+app/
+├── main.py                   # FastAPI lifespan and endpoints
+└── schemas.py                # HTTP request and response contracts
+
 bookrec/
 ├── data.py                   # Loading, splitting, and ID encoding
-├── catalog.py                # ISBN metadata, title search, and resolution
+├── catalog.py                # ISBN metadata and title-to-ISBN resolution
 ├── training.py               # Shared training and evaluation loops
 ├── implicit/
 │   ├── datasets.py          # Negative sampling and sparse-history batching
 │   ├── baselines.py         # Random, popularity, and implicit ALS
 │   ├── model.py             # ID models, history MLP, and ensembles
 │   ├── inference.py         # Checkpoint loading and low-level scoring
-│   ├── recommender.py       # Serving interface for ISBN/title queries
+│   ├── recommender.py       # Serving interface for ISBN histories
 │   ├── metrics.py           # Ranking metrics
 │   └── evaluation.py
 └── explicit/
@@ -141,11 +145,45 @@ recommendations = recommender.recommend_by_isbn(
 )
 ```
 
-`recommend_by_title()` uses the catalog's exact-title-then-prefix edition
-resolution and its configurable `min_query_interactions` threshold.
-`search_titles()` has a separate `min_training_interactions` argument for a
-future API autocomplete endpoint. Scores are ensemble ranking scores learned
+The serving responsibilities are deliberately separate. The catalog resolves
+titles and retrieves display metadata, while the recommender only ranks ISBNs:
+
+```python
+query_isbns = recommender.catalog.resolve_titles(
+    ["The Lord of the Rings"],
+    min_training_interactions=20,
+)
+recommendations = recommender.recommend_by_isbn(query_isbns, top_k=10)
+books = recommender.catalog.get_books(
+    [result["isbn"] for result in recommendations]
+)
+```
+
+Recommendations contain `isbn`, `title`, `rank`, and `score`, making the result
+immediately readable. `get_books()` returns the remaining metadata, including
+author, publication data, cover URL, and training-interaction count, in the
+same order as the requested ISBNs. Scores are ensemble ranking scores learned
 with sampled BCE and should not be presented as calibrated probabilities.
+
+## Serving API
+
+FastAPI loads the ensemble and catalog once during application startup. Its
+three application operations remain independent:
+
+```text
+POST /books/resolve   titles -> ISBNs
+POST /books/metadata  ISBNs -> metadata and training counts
+POST /recommendations history ISBNs + top_k -> ISBNs, titles, ranks, and scores
+```
+
+Start the local development server from the repository root:
+
+```bash
+.venv/bin/fastapi dev app/main.py
+```
+
+The generated interactive documentation is available at
+`http://127.0.0.1:8000/docs`.
 
 ## Implicit model
 
