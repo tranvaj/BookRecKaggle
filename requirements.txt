@@ -1,4 +1,10 @@
 kagglehub[pandas-datasets]
+implicit
 numpy
+optuna
 pandas
+scipy
+threadpoolctl
 torch
+tqdm
+fastapi[standard]

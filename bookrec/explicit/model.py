@@ -1,9 +1,10 @@
 import torch
 from torch import nn
-import torch
-import torch.nn.functional as F
 
-class RecommenderMLP(nn.Module):
+
+class ExplicitRecommenderMLP(nn.Module):
+    """Predict ratings directly from learned user and item embeddings."""
+
     def __init__(
         self,
         num_users: int,
@@ -22,7 +23,9 @@ class RecommenderMLP(nn.Module):
         layers: list[nn.Module] = []
         input_dim = embedding_dim * 2
         for hidden_dim in hidden_dims:
-            layers.extend((nn.Linear(input_dim, hidden_dim), nn.ReLU(), nn.Dropout(dropout)))
+            layers.extend(
+                (nn.Linear(input_dim, hidden_dim), nn.ReLU(), nn.Dropout(dropout))
+            )
             input_dim = hidden_dim
         layers.append(nn.Linear(input_dim, 1))
         self.mlp = nn.Sequential(*layers)
@@ -30,10 +33,25 @@ class RecommenderMLP(nn.Module):
         nn.init.normal_(self.user_embedding.weight, std=0.05)
         nn.init.normal_(self.item_embedding.weight, std=0.05)
 
-    def forward(self, users: torch.Tensor, items: torch.Tensor, **kwargs) -> torch.Tensor:
+    def forward(self, users: torch.Tensor, items: torch.Tensor) -> torch.Tensor:
         features = torch.cat(
             (self.user_embedding(users), self.item_embedding(items)),
             dim=-1,
         )
-        interaction = self.mlp(features).squeeze(-1)
-        return interaction
+        return self.mlp(features).squeeze(-1)
+
+
+class ExplicitMLPEnsemble(nn.Module):
+    """Average rating predictions from independent MLP copies."""
+
+    def __init__(self, members: list[ExplicitRecommenderMLP]):
+        super().__init__()
+        if len(members) < 2:
+            raise ValueError("An ensemble requires at least two members")
+        self.members = nn.ModuleList(members)
+
+    def forward(self, users: torch.Tensor, items: torch.Tensor) -> torch.Tensor:
+        return torch.stack(
+            [member(users, items) for member in self.members],
+            dim=0,
+        ).mean(dim=0)
