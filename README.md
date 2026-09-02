@@ -303,14 +303,26 @@ Model selection used validation data only. With seed 42, the held-out test
 evaluation uses 1,000 candidates per user for implicit ranking and known
 user/item pairs for explicit rating prediction.
 
-| Implicit model | Recall@50 | NDCG@50 | Recall@100 |
+Implicit-feedback recommendation uses sampled evaluation with 1,000 books per
+user.
+
+| Implicit model | Recall@50 ↑ | NDCG@50 ↑ | Recall@100 ↑ |
 |---|---:|---:|---:|
+| Random | 0.0386 | 0.0131 | 0.0748 |
+| Most Popular | 0.5095 | 0.2642 | 0.6192 |
+| MF (ALS) | 0.6181 | 0.3573 | 0.6903 |
 | MLP | 0.5487 | 0.2918 | 0.6442 |
 | NeuMF | 0.5388 | 0.2956 | 0.6276 |
-| MLP probability ensemble (5) | **0.5879** | **0.3150** | **0.6855** |
+| MLP Ensemble (5) | 0.5879 | 0.3150 | 0.6855 |
+| History MLP (full history) | 0.5811 | 0.3209 | 0.6708 |
+| History MLP (singleton) | 0.4129 | 0.1950 | 0.5174 |
+| History MLP Ensemble (5, full history) | **0.6474** | **0.4026** | **0.7285** |
+| History MLP Ensemble (5, singleton) | 0.5151 | 0.2714 | 0.6242 |
 
-| Explicit model | RMSE | MAE |
+| Explicit model | RMSE ↓ | MAE ↓ |
 |---|---:|---:|
+| Global mean | 1.811865 | 1.477505 |
+| User mean | 1.636771 | 1.249119 |
 | MLP | 1.6070 | 1.2327 |
 | MLP ensemble (5) | **1.5849** | **1.2213** |
 
@@ -318,9 +330,7 @@ All tasks build user and item mappings from training data. Validation/test
 interactions with cold-start items are excluded because interaction-only
 collaborative filtering cannot represent unseen books. The history MLP supports
 an anonymous query made from one or more mapped books, while the user-ID MLP and
-NeuMF require a user represented in the training mappings. History MLP results
-are not included above until the new model and ensemble have been trained and
-evaluated.
+NeuMF require a user represented in the training mappings.
 
 ## Tests
 
